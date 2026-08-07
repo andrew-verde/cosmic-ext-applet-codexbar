@@ -23,6 +23,11 @@ git = "https://github.com/pop-os/libcosmic"
 default-features = false
 features = ["applet", "tokio", "wayland", "winit"]
 
+[dev-dependencies]
+# Lets the layout regression test in `src/window.rs` run iced's real layout
+# pass, with real font metrics, without a GPU or a compositor.
+iced_tiny_skia = { git = "https://github.com/pop-os/libcosmic" }
+
 [features]
 default = ["wgpu"]
 wgpu = ["libcosmic/wgpu"]

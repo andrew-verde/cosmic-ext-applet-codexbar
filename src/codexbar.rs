@@ -315,38 +315,45 @@ impl RateLimitWindow {
         }
     }
 
-    /// Reset text: the CLI's own description when present, otherwise a
-    /// countdown computed from `resetsAt`.
+    /// Reset text, e.g. "Resets in 4h 1m".
     ///
-    /// `resetDescription` is not consistently phrased across providers - Claude
-    /// sends "Resets 3:50pm (Asia/Tokyo)" while Codex sends the bare
-    /// "Aug 10 at 11:39 PM" - so the "Resets" prefix is only added when the
-    /// description does not already carry it. Blindly prefixing produced
-    /// "resets Resets 3:50pm (Asia/Tokyo)".
+    /// A countdown computed from `resetsAt` is preferred over the CLI's
+    /// `resetDescription`: the description is a localised wall-clock string
+    /// ("Resets 3:50pm (Asia/Tokyo)") that is both longer than the popup's
+    /// value column can hold and less useful than "how long have I got". The
+    /// description is only used when there is no `resetsAt` to count down to,
+    /// and its parenthesised timezone suffix is dropped for the same reason -
+    /// it names the reader's own timezone, so it carries no information.
     pub fn reset_text(&self, now: DateTime<Utc>) -> Option<String> {
-        if let Some(description) = &self.reset_description {
-            let description = normalise_spaces(description.trim());
-            if !description.is_empty() {
-                if description.to_lowercase().starts_with("reset") {
-                    return Some(description);
-                }
-                return Some(format!("Resets {description}"));
+        if let Some(resets_at) = self.resets_at {
+            let remaining = resets_at.signed_duration_since(now);
+            if remaining.num_seconds() <= 0 {
+                return Some("Resetting now".to_string());
             }
+            return Some(format!(
+                "Resets in {}",
+                duration_text(remaining.num_seconds() as u64)
+            ));
         }
-        let resets_at = self.resets_at?;
-        let remaining = resets_at.signed_duration_since(now);
-        if remaining.num_seconds() <= 0 {
-            return Some("Resetting now".to_string());
+
+        let description = normalise_spaces(self.reset_description.as_deref()?);
+        let description = strip_parenthetical(description.trim());
+        if description.is_empty() {
+            return None;
         }
-        let hours = remaining.num_hours();
-        let minutes = remaining.num_minutes() % 60;
-        if hours >= 24 {
-            Some(format!("Resets in {}d {}h", hours / 24, hours % 24))
-        } else if hours > 0 {
-            Some(format!("Resets in {hours}h {minutes}m"))
-        } else {
-            Some(format!("Resets in {minutes}m"))
+        if description.to_lowercase().starts_with("reset") {
+            return Some(description.to_string());
         }
+        Some(format!("Resets {description}"))
+    }
+}
+
+/// Drop a trailing parenthesised group, e.g. the "(Asia/Tokyo)" CodexBar
+/// appends to Claude's reset descriptions.
+fn strip_parenthetical(text: &str) -> &str {
+    match text.rfind('(') {
+        Some(open) if text.ends_with(')') => text[..open].trim_end(),
+        _ => text,
     }
 }
 
@@ -675,9 +682,11 @@ mod tests {
         let secondary = usage.secondary.as_ref().unwrap();
         assert_eq!(secondary.used_percent, Some(75.0));
         assert_eq!(secondary.window_label("Secondary"), "Weekly");
+        // `resetsAt` is present, so the countdown wins over the description.
+        let before_reset: DateTime<Utc> = "2026-08-07T14:39:58Z".parse().unwrap();
         assert_eq!(
-            secondary.reset_text(Utc::now()).as_deref(),
-            Some("Resets Aug 10 at 11:39 PM")
+            secondary.reset_text(before_reset).as_deref(),
+            Some("Resets in 3d 0h")
         );
 
         let claude = &payloads[1];
@@ -687,16 +696,17 @@ mod tests {
             claude_usage.primary.as_ref().unwrap().window_label("P"),
             "Session"
         );
-        // Claude's own description already starts with "Resets", so it is used
-        // verbatim rather than double-labelled.
+        // Claude reports both, and the countdown is preferred: the description
+        // is a localised wall-clock string too wide for the popup's value cell.
+        let before_reset: DateTime<Utc> = "2026-08-07T05:50:00Z".parse().unwrap();
         assert_eq!(
             claude_usage
                 .primary
                 .as_ref()
                 .unwrap()
-                .reset_text(Utc::now())
+                .reset_text(before_reset)
                 .as_deref(),
-            Some("Resets 3:50pm (Asia/Tokyo)")
+            Some("Resets in 1h 0m")
         );
 
         // antigravity's windows carry no `windowMinutes` at all, only usedPercent/resetsAt.
@@ -820,6 +830,28 @@ mod tests {
         }
       }
     ]"#;
+
+    #[test]
+    fn drops_the_timezone_suffix_from_a_description_fallback() {
+        // No `resetsAt`, so the description is all there is - minus the
+        // "(Asia/Tokyo)" that names the reader's own timezone.
+        let payloads = parse_usage_json(
+            r#"[{"provider": "claude", "usage": {"primary":
+                 {"resetDescription": "Resets 3:50pm (Asia/Tokyo)"}}}]"#,
+        )
+        .unwrap();
+        let window = payloads[0]
+            .usage
+            .as_ref()
+            .unwrap()
+            .primary
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            window.reset_text(Utc::now()).as_deref(),
+            Some("Resets 3:50pm")
+        );
+    }
 
     #[test]
     fn normalises_exotic_spaces_in_reset_description() {

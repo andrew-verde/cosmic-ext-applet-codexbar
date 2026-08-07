@@ -41,9 +41,14 @@ const TAB_ICON_SIZE: u16 = 18;
 /// Edge length of a provider icon beside the provider name.
 const HEADER_ICON_SIZE: u16 = 24;
 
+/// Icon for the Overview tab: the 2x2 grid of rounded squares in COSMIC's own
+/// icon theme, resolved by name so it follows whatever theme is active.
+const OVERVIEW_ICON: &str = "view-grid-symbolic";
+
 /// Gap between the major blocks of a provider's tab (header, each rate limit
 /// window, cost). The macOS app leans on whitespace to separate these.
 const BLOCK_SPACING: u16 = 14;
+
 
 /// Identifies the autosizing popup body to the shell, mirroring the private
 /// `AUTOSIZE_ID` that `cosmic::applet::Context::popup_container` uses.
@@ -261,13 +266,15 @@ impl Window {
     /// which is what truncated the labels at four tabs; a plain row of buttons
     /// sizes to its content and lets each tab stack its icon over its name.
     fn tab_strip<'a>(&self, payloads: &'a [ProviderPayload]) -> Element<'a, Message> {
-        let mut row = widget::Row::new()
-            .spacing(4)
-            .push(self.tab_button("Overview", None, Tab::Overview));
+        let mut row = widget::Row::new().spacing(4).push(self.tab_button(
+            "Overview",
+            Some(widget::icon::from_name(OVERVIEW_ICON).handle()),
+            Tab::Overview,
+        ));
         for payload in payloads {
             row = row.push(self.tab_button(
                 payload.label(),
-                provider_icon(&payload.provider),
+                provider_glyph(&payload.provider),
                 Tab::Provider(payload.provider.clone()),
             ));
         }
@@ -279,14 +286,14 @@ impl Window {
     fn tab_button<'a>(
         &self,
         label: impl Into<String>,
-        icon: Option<&'static [u8]>,
+        icon: Option<widget::icon::Handle>,
         tab: Tab,
     ) -> Element<'a, Message> {
         let mut column = widget::Column::new()
             .spacing(2)
             .align_x(Horizontal::Center);
         if let Some(icon) = icon {
-            column = column.push(provider_glyph(icon, TAB_ICON_SIZE));
+            column = column.push(glyph(icon, TAB_ICON_SIZE));
         }
         column = column.push(widget::text::caption(label.into()));
 
@@ -306,8 +313,8 @@ impl Window {
     /// many providers at once without the full per-window layout.
     fn provider_summary<'a>(&'a self, payload: &'a ProviderPayload) -> Element<'a, Message> {
         let mut title = widget::Row::new().spacing(6).align_y(Vertical::Center);
-        if let Some(icon) = provider_icon(&payload.provider) {
-            title = title.push(provider_glyph(icon, TAB_ICON_SIZE));
+        if let Some(icon) = provider_glyph(&payload.provider) {
+            title = title.push(glyph(icon, TAB_ICON_SIZE));
         }
         title = title.push(widget::text::title4(payload.label()));
 
@@ -352,8 +359,8 @@ impl Window {
     fn provider_detail<'a>(&'a self, payload: &'a ProviderPayload) -> Element<'a, Message> {
         let now = Utc::now();
         let mut title = widget::Row::new().spacing(8).align_y(Vertical::Center);
-        if let Some(icon) = provider_icon(&payload.provider) {
-            title = title.push(provider_glyph(icon, HEADER_ICON_SIZE));
+        if let Some(icon) = provider_glyph(&payload.provider) {
+            title = title.push(glyph(icon, HEADER_ICON_SIZE));
         }
         title = title.push(widget::text::title3(payload.label()));
 
@@ -441,8 +448,15 @@ impl Window {
         column.into()
     }
 
-    /// Title, progress bar, then two two-column caption rows: the percentage
-    /// opposite the reset countdown, and the pace stage opposite the projection.
+    /// Section title opposite the reset countdown, the progress bar, the
+    /// percentage, then the pace line.
+    ///
+    /// Only the title row is two-column, and both of its cells come from a
+    /// short, bounded vocabulary. The percentage and the pace line each own a
+    /// full-width row instead of competing with a sibling: this popup is 320px
+    /// wide at its narrowest, which is not enough for two variable-length
+    /// strings side by side, and a starved cell word-wraps to one word per line
+    /// with the space at each wrap point undrawn. See the layout tests below.
     fn window_block<'a>(
         &'a self,
         window: &'a RateLimitWindow,
@@ -459,25 +473,21 @@ impl Window {
         let mut column = widget::Column::new()
             .spacing(6)
             .width(Length::Fill)
-            .push(widget::text::heading(window.window_label(fallback)))
+            .push(split_row(
+                widget::text::heading(window.window_label(fallback)),
+                widget::text::caption(reset.unwrap_or_default()),
+            ))
             .push(widget::determinate_linear(
                 self.config.usage_display.fraction(window.fraction()),
             ))
-            .push(split_row(
-                widget::text::title4(self.percent_text(window)),
-                widget::text::body(reset.unwrap_or_default()),
-            ));
+            .push(widget::text::heading(self.percent_text(window)).width(Length::Fill));
 
         if self.config.show_pace
             && let Some(pace) = pace
         {
-            let stage = pace.stage_text().unwrap_or_default();
-            let projection = pace.projection_text().unwrap_or_default();
-            if !stage.is_empty() || !projection.is_empty() {
-                column = column.push(split_row(
-                    widget::text::caption(stage),
-                    widget::text::caption(projection),
-                ));
+            let line = pace_line(pace);
+            if !line.is_empty() {
+                column = column.push(widget::text::caption(line).width(Length::Fill));
             }
         }
 
@@ -621,10 +631,11 @@ fn split_row<'a>(
         .into()
 }
 
-/// A vendored provider icon, tinted with the theme's foreground colour. The
-/// SVGs are monochrome templates, so they carry no colour of their own.
-fn provider_glyph<'a>(icon: &'static [u8], size: u16) -> Element<'a, Message> {
-    widget::icon(widget::icon::from_svg_bytes(icon).symbolic(true))
+/// An icon tinted with the theme's foreground colour. Both the vendored
+/// provider SVGs and the system's symbolic icons are monochrome templates, so
+/// they carry no colour of their own.
+fn glyph<'a>(handle: widget::icon::Handle, size: u16) -> Element<'a, Message> {
+    widget::icon(handle)
         .size(size)
         .class(cosmic::theme::Svg::custom(|theme| {
             cosmic::iced::widget::svg::Style {
@@ -632,6 +643,22 @@ fn provider_glyph<'a>(icon: &'static [u8], size: u16) -> Element<'a, Message> {
             }
         }))
         .into()
+}
+
+/// The vendored icon for a provider id, ready to render.
+fn provider_glyph(provider: &str) -> Option<widget::icon::Handle> {
+    provider_icon(provider).map(|svg| widget::icon::from_svg_bytes(svg).symbolic(true))
+}
+
+/// The pace stage and its projection as one full-width line, e.g.
+/// "26% in reserve - Lasts until reset". Joining them means the line can wrap
+/// at a word boundary if it has to, rather than being squeezed into a column
+/// too narrow to hold either half.
+fn pace_line(pace: &PaceWindow) -> String {
+    let mut parts = Vec::with_capacity(2);
+    parts.extend(pace.stage_text());
+    parts.extend(pace.projection_text());
+    parts.join(" - ")
 }
 
 fn account_caption<'a>(payload: &'a ProviderPayload, config: &Config) -> Element<'a, Message> {
@@ -662,16 +689,183 @@ fn cost_block<'a>(cost: &'a CostPayload) -> Element<'a, Message> {
             widget::text::caption("30d cost"),
         ))
         .push(split_row(
-            widget::text::title4(money(cost.session_cost_usd)),
-            widget::text::title4(money(cost.last30_days_cost_usd)),
+            widget::text::heading(money(cost.session_cost_usd)),
+            widget::text::heading(money(cost.last30_days_cost_usd)),
         ))
         .push(split_row(
             widget::text::caption("Latest tokens"),
             widget::text::caption("30d tokens"),
         ))
         .push(split_row(
-            widget::text::title4(tokens(cost.session_tokens)),
-            widget::text::title4(tokens(cost.last30_days_tokens)),
+            widget::text::heading(tokens(cost.session_tokens)),
+            widget::text::heading(tokens(cost.last30_days_tokens)),
         ))
         .into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmic::iced::Pixels;
+    use cosmic::iced::advanced::layout::{Limits, Node};
+    use cosmic::iced::advanced::widget::Tree;
+
+    /// A real `cosmic::Renderer`, built without a GPU or a compositor so the
+    /// layout pass below measures text with the same font machinery the applet
+    /// uses at runtime.
+    fn renderer() -> Renderer {
+        Renderer::Secondary(iced_tiny_skia::Renderer::new(
+            cosmic::font::default(),
+            Pixels(14.0),
+        ))
+    }
+
+    /// Lay `element` out at `width` and return the resulting node.
+    fn layout(element: Element<'_, Message>, width: f32) -> Node {
+        let mut element = element;
+        let mut tree = Tree::new(element.as_widget());
+        // The popup body is measured with a shrinking (compressed) width, which
+        // is what makes `layout::flex::resolve` lay a row's children out in
+        // document order.
+        let limits = Limits::NONE.max_width(width).width(Length::Shrink);
+        element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer(), &limits)
+    }
+
+    /// Width the right-hand cell of a `split_row` is actually given, using the
+    /// same widget pairing `window_block` renders.
+    fn right_cell_width(left: &str, right: &str, width: f32) -> f32 {
+        let node = layout(
+            split_row(widget::text::heading(left), widget::text::caption(right)),
+            width,
+        );
+        node.children()[1].size().width
+    }
+
+    /// Natural, unwrapped width of a caption.
+    fn caption_width(text: &str) -> f32 {
+        layout(widget::text::caption(text).into(), f32::INFINITY)
+            .size()
+            .width
+    }
+
+    /// Width `cosmic::widget::scrollable` reserves for its scrollbar and its
+    /// padding, which a window block does not get to use.
+    const SCROLLBAR_GUTTER: f32 = 16.0;
+
+    /// The narrowest a window block can be: `popup_limits`'s minimum width less
+    /// the chrome between the popup edge and the block, i.e. `padded_control`'s
+    /// horizontal padding and the scrollbar gutter.
+    fn narrowest_block() -> f32 {
+        block_width(320.0)
+    }
+
+    /// The width a window block gets inside a popup `width` wide.
+    fn block_width(popup: f32) -> f32 {
+        popup - f32::from(cosmic::theme::spacing().space_m) * 2.0 - SCROLLBAR_GUTTER
+    }
+
+    /// Every window title the applet can put in the left cell, longest first.
+    const TITLES: [&str; 4] = ["Monthly", "Session", "Weekly", "Tertiary"];
+
+    /// Every reset string `RateLimitWindow::reset_text` can produce, worst case.
+    /// It counts down from `resetsAt`, so these are short and bounded; the last
+    /// is the longest fallback that survives `strip_parenthetical` when a
+    /// provider reports no `resetsAt`.
+    const RESET_TEXTS: [&str; 4] = [
+        "Resets in 6d 23h",
+        "Resets in 18m",
+        "Resetting now",
+        "Resets Aug 11, 1am",
+    ];
+
+    /// The regression this file kept re-introducing.
+    ///
+    /// When a `split_row` cell is narrower than its text, cosmic-text word-wraps
+    /// it and does not draw the space at each wrap point, so
+    /// "Resets 3:50pm (Asia/Tokyo)" rendered as "Resets3:50pm(Asia/Tokyo)".
+    /// `split_row` cannot guarantee a cell's width on its own: with a compressed
+    /// main axis `layout::flex::resolve` lays children out in document order and
+    /// the first one takes whatever it asks for. So the invariant is that both
+    /// cells of a two-column row come from bounded vocabularies that fit side by
+    /// side at the narrowest popup width - which is what this asserts, through
+    /// iced's real layout pass with real font metrics.
+    #[test]
+    fn window_title_row_fits_at_the_narrowest_popup_width() {
+        for title in TITLES {
+            for reset in RESET_TEXTS {
+                let needs = caption_width(reset);
+                let available = right_cell_width(title, reset, narrowest_block());
+                assert!(
+                    available >= needs,
+                    "{title:?} + {reset:?}: value needs {needs} but was given {available}"
+                );
+            }
+        }
+    }
+
+    /// Height of one line of `widget::text::caption`, per libcosmic's preset.
+    const CAPTION_LINE: f32 = 17.0;
+
+    /// Height of one line of `widget::text::heading`.
+    const HEADING_LINE: f32 = 21.0;
+
+    /// The pace stage and its projection are two variable-length strings that
+    /// together do not fit side by side at the narrowest popup width, so they
+    /// share one full-width line instead of a two-column row - which leaves
+    /// enough room to set them on a single line rather than one word per line.
+    #[test]
+    fn pace_line_sets_on_one_line() {
+        let pace = PaceWindow {
+            stage: None,
+            delta_percent: None,
+            expected_used_percent: None,
+            will_last_to_reset: Some(true),
+            eta_seconds: None,
+            summary: Some("26% in reserve | Expected 49% used | Lasts until reset".to_string()),
+        };
+        assert_eq!(pace_line(&pace), "26% in reserve - Lasts until reset");
+
+        // One line at the popup's full width, and never worse than a single
+        // word-boundary wrap at its narrowest. The starved rendering this
+        // guards against was one word per line, i.e. five.
+        let widest = layout(
+            widget::text::caption(pace_line(&pace))
+                .width(Length::Fill)
+                .into(),
+            block_width(420.0),
+        );
+        assert!(
+            widest.size().height <= CAPTION_LINE + 1.0,
+            "pace line wrapped at full width: {widest:?}"
+        );
+
+        let narrowest = layout(
+            widget::text::caption(pace_line(&pace))
+                .width(Length::Fill)
+                .into(),
+            narrowest_block(),
+        );
+        assert!(
+            narrowest.size().height <= CAPTION_LINE * 2.0 + 1.0,
+            "pace line wrapped more than once: {narrowest:?}"
+        );
+    }
+
+    /// The percentage owns its row, so it is never squeezed either.
+    #[test]
+    fn percentage_sets_on_one_line() {
+        let node = layout(
+            widget::text::heading("100% remaining")
+                .width(Length::Fill)
+                .into(),
+            narrowest_block(),
+        );
+        assert!(
+            node.size().height <= HEADING_LINE + 1.0,
+            "percentage wrapped: {node:?}"
+        );
+    }
+}
+
