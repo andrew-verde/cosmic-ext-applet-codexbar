@@ -1,5 +1,5 @@
 [package]
-name = "cosmic-ext-applet-codexbar"
+name = "codexbar-cosmic-applet"
 version = "0.1.0"
 edition = "2024"
 description = "COSMIC panel applet showing Codex / Claude Code usage limits"

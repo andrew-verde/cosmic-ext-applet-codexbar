@@ -6,8 +6,8 @@ target := if debug == '1' { 'debug' } else { 'release' }
 vendor_args := if vendor == '1' { '--frozen --offline' } else { '' }
 debug_args := if debug == '1' { '' } else { '--release' }
 
-name := 'cosmic-ext-applet-codexbar'
-appid := 'dev.andrewgreen.codexbar'
+name := 'codexbar-cosmic-applet'
+appid := 'io.github.andrew-verde.CodexBarCosmicApplet'
 
 targetdir := env('CARGO_TARGET_DIR', 'target')
 sharedir := rootdir + prefix + '/share'

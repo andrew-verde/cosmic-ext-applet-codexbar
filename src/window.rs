@@ -20,8 +20,8 @@ use cosmic::{Action, Application, Element, Renderer, Task};
 use crate::codexbar::{ProviderPayload, fetch_usage};
 use crate::config::Config;
 
-const ID: &str = "dev.andrewgreen.codexbar";
-const ICON: &str = "dev.andrewgreen.codexbar-symbolic";
+const ID: &str = "io.github.andrew-verde.CodexBarCosmicApplet";
+const ICON: &str = "io.github.andrew-verde.CodexBarCosmicApplet-symbolic";
 const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Identifies the autosizing popup body to the shell, mirroring the private

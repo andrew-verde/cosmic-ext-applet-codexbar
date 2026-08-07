@@ -1,4 +1,4 @@
-# CodexBar applet for COSMIC Desktop
+# codexbar-cosmic-applet
 
 A native [COSMIC](https://github.com/pop-os/cosmic-epoch) panel applet that shows
 your OpenAI Codex / Claude Code usage limits, in the spirit of the macOS app
@@ -49,7 +49,7 @@ On Fedora, `just` is available via `sudo dnf install just`.
 
 ```sh
 git clone <this repository>
-cd cosmic-ext-applet-codexbar
+cd codexbar-cosmic-applet
 just build-release
 sudo just install
 ```
@@ -58,9 +58,9 @@ sudo just install
 
 | file | destination |
 | --- | --- |
-| `cosmic-ext-applet-codexbar` | `/usr/bin/` |
-| `dev.andrewgreen.codexbar.desktop` | `/usr/share/applications/` |
-| `dev.andrewgreen.codexbar-symbolic.svg` | `/usr/share/icons/hicolor/scalable/apps/` |
+| `codexbar-cosmic-applet` | `/usr/bin/` |
+| `io.github.andrew-verde.CodexBarCosmicApplet.desktop` | `/usr/share/applications/` |
+| `io.github.andrew-verde.CodexBarCosmicApplet-symbolic.svg` | `/usr/share/icons/hicolor/scalable/apps/` |
 
 To install somewhere else, override `prefix` or `rootdir`, e.g.
 `just prefix=$HOME/.local install` (COSMIC also reads applets from
@@ -82,10 +82,10 @@ newly installed applet appears in that list.
 The applet reads an optional TOML file from
 
 ```
-~/.config/cosmic-ext-applet-codexbar/config.toml
+~/.config/codexbar-cosmic-applet/config.toml
 ```
 
-(strictly `$XDG_CONFIG_HOME/cosmic-ext-applet-codexbar/config.toml`). It is
+(strictly `$XDG_CONFIG_HOME/codexbar-cosmic-applet/config.toml`). It is
 written out with every field at its default the first time the applet runs, and
 re-read on every refresh — edits apply within about 60 seconds, with no need to
 restart the applet or the panel. If the file is missing or malformed the applet
