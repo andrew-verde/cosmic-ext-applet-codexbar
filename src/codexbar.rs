@@ -35,10 +35,15 @@
 //! wrong, only the `serde` attributes below need adjusting.
 
 use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+
+/// The CLI this applet drives. Every invocation is this name plus a fixed
+/// argument list; nothing user-supplied ever reaches a command line.
+const PROGRAM: &str = "codexbar";
 
 /// One entry of the `codexbar usage --format json` array.
 #[derive(Debug, Clone, Deserialize)]
@@ -455,13 +460,17 @@ fn parse_output<T>(
 }
 
 /// Run the `codexbar` CLI, trying each install location in turn.
+///
+/// `PATH` always comes first, so a distro package or any binary the user has
+/// put on their `PATH` wins; everything after it is a pure fallback, tried only
+/// when the previous candidate does not exist.
 async fn run_codexbar(args: &[&str]) -> Result<std::process::Output, String> {
     // cosmic-panel applets are launched by the systemd graphical session, which
     // does not source ~/.bashrc or ~/.profile, so managers that only extend PATH
-    // there (Homebrew's `shellenv`, `~/.local/bin` added by some installers)
-    // are invisible here even though `codexbar` works fine in a terminal.
-    let mut candidates = vec!["codexbar".to_string(), dirs_local_bin()];
-    candidates.extend(linuxbrew_candidates());
+    // there (Homebrew's `shellenv`, ~/.local/bin added by some installers) are
+    // invisible here even though `codexbar` works fine in a terminal.
+    let mut candidates = vec![PathBuf::from(PROGRAM)];
+    candidates.extend(fallback_candidates());
 
     for candidate in &candidates {
         match run_cli(candidate, args).await {
@@ -475,7 +484,7 @@ async fn run_codexbar(args: &[&str]) -> Result<std::process::Output, String> {
         .to_string())
 }
 
-async fn run_cli(program: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
+async fn run_cli(program: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
     tokio::process::Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -483,22 +492,21 @@ async fn run_cli(program: &str, args: &[&str]) -> std::io::Result<std::process::
         .await
 }
 
-fn dirs_local_bin() -> String {
-    match std::env::var("HOME") {
-        Ok(home) => format!("{home}/.local/bin/codexbar"),
-        Err(_) => "codexbar".to_string(),
+/// Where to look when `codexbar` is not on `PATH`.
+///
+/// `dirs` resolves `~/.local/bin` through `$XDG_BIN_HOME` where it is set, and
+/// Homebrew on Linux installs either to the shared `/home/linuxbrew/.linuxbrew`
+/// prefix or to a per-user `~/.linuxbrew` when the shared one is not writable.
+/// Its `bin/codexbar` is a wrapper script that execs the real binary under
+/// `Cellar/codexbar/<version>/`, so following `bin/codexbar` is enough.
+fn fallback_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::with_capacity(3);
+    if let Some(bin) = dirs::executable_dir() {
+        candidates.push(bin.join(PROGRAM));
     }
-}
-
-/// Homebrew on Linux installs to `/home/linuxbrew/.linuxbrew` (the default,
-/// shared prefix) or `~/.linuxbrew` (a per-user prefix used when the shared
-/// one isn't writable). Its `bin/codexbar` is only a wrapper script that execs
-/// the real binary under `Cellar/codexbar/<version>/`, so following the
-/// `bin/codexbar` symlink is enough - no need to glob the Cellar directly.
-fn linuxbrew_candidates() -> Vec<String> {
-    let mut candidates = vec!["/home/linuxbrew/.linuxbrew/bin/codexbar".to_string()];
-    if let Ok(home) = std::env::var("HOME") {
-        candidates.push(format!("{home}/.linuxbrew/bin/codexbar"));
+    candidates.push(PathBuf::from("/home/linuxbrew/.linuxbrew/bin").join(PROGRAM));
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".linuxbrew/bin").join(PROGRAM));
     }
     candidates
 }

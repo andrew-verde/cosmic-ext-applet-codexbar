@@ -49,7 +49,6 @@ const OVERVIEW_ICON: &str = "view-grid-symbolic";
 /// window, cost). The macOS app leans on whitespace to separate these.
 const BLOCK_SPACING: u16 = 14;
 
-
 /// Identifies the autosizing popup body to the shell, mirroring the private
 /// `AUTOSIZE_ID` that `cosmic::applet::Context::popup_container` uses.
 static AUTOSIZE_ID: LazyLock<cosmic::iced::id::Id> =
@@ -137,15 +136,17 @@ impl Application for Window {
                     return destroy_popup(popup);
                 }
                 self.reload_config();
+                // No main window means the panel has not mapped the applet yet,
+                // so there is nothing to anchor a popup to.
+                let Some(parent) = self.core.main_window_id() else {
+                    return Task::none();
+                };
                 let new_id = Id::unique();
                 self.popup.replace(new_id);
-                let mut popup_settings = self.core.applet.get_popup_settings(
-                    self.core.main_window_id().unwrap(),
-                    new_id,
-                    None,
-                    None,
-                    None,
-                );
+                let mut popup_settings = self
+                    .core
+                    .applet
+                    .get_popup_settings(parent, new_id, None, None, None);
                 popup_settings.positioner.size_limits = popup_limits();
                 return Task::batch([
                     refresh_task(),
@@ -531,6 +532,12 @@ impl Window {
     /// `popup_container` with the background alpha replaced outright. The alpha
     /// is absolute rather than a multiplier, so `1.0` gives a solid, readable
     /// panel even when the theme would otherwise render it translucent.
+    ///
+    /// This is a derivative of `cosmic::applet::Context::popup_container`
+    /// (`src/applet/mod.rs` in <https://github.com/pop-os/libcosmic>), which is
+    /// MPL-2.0 rather than MIT like the rest of this crate; upstream bakes its
+    /// container style in with no hook to override, so there is no way to reach
+    /// the alpha without restating it. See `THIRD_PARTY_LICENSES.md`.
     fn popup_container_with_opacity<'a>(
         &self,
         content: impl Into<Element<'a, Message>>,
@@ -602,18 +609,17 @@ fn refresh_task() -> Task<Action<Message>> {
     ])
 }
 
-/// The layout used throughout the popup: a left-aligned label and a counterpart
-/// flush against the right edge.
+/// A left-aligned label with a counterpart flush against the right edge.
 ///
-/// The slack deliberately sits in the *right* cell. `Row` defaults to
-/// `Length::Shrink`, which makes `layout::flex::resolve` treat the main axis as
-/// compressed and lay every child out in document order, each consuming from
-/// the space the previous one left. A `Length::Fill` cell resolves to the whole
-/// of what it is offered, so a fill-first row starved whatever followed it of
-/// width and the trailing text word-wrapped to one word per line, dropping the
-/// spaces at each wrap point. Putting the shrink cell first means it measures
-/// naturally and the fill cell takes what is genuinely left over, under either
-/// compression mode.
+/// This cannot guarantee the right cell any particular width, and callers must
+/// not assume it does. `Row` defaults to `Length::Shrink`, so
+/// `layout::flex::resolve` treats the main axis as compressed and lays every
+/// child out in document order, each taking from what the previous one left;
+/// no ordering changes that. A cell narrower than its text word-wraps, and
+/// cosmic-text does not draw the space at a wrap point, so a starved cell reads
+/// as though its spaces had vanished. Only pair strings short enough to sit
+/// side by side at the narrowest popup width - `window_block` explains where
+/// that bites and the tests below hold the line.
 fn split_row<'a>(
     left: impl Into<Element<'a, Message>>,
     right: impl Into<Element<'a, Message>>,

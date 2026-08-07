@@ -1,17 +1,20 @@
 //! Provider brand icons, vendored from CodexBar and embedded in the binary.
 //!
-//! The SVGs under `data/icons/providers/` come from
+//! The SVGs under `data/icons/providers/` are byte-for-byte copies of
 //! `Sources/CodexBar/Resources/ProviderIcon-<slug>.svg` in
 //! <https://github.com/steipete/CodexBar> (MIT, Copyright (c) 2026 Peter
-//! Steinberger - see `THIRD_PARTY_LICENSES.md`). Each is a single monochrome
-//! `<path fill="white">` in a `100x100` viewBox, meant to be tinted by the
-//! consuming app, which is why they are rendered with the theme's icon colour
-//! rather than a per-provider accent.
+//! Steinberger - see `THIRD_PARTY_LICENSES.md`); only the filename's
+//! `ProviderIcon-` prefix is dropped.
 //!
-//! Embedding avoids an install step and a runtime file lookup for ~270KB of
-//! assets that never change. The table is generated from the directory listing;
-//! the slug is the CodexBar provider id, which is also the id the `codexbar`
-//! CLI reports in `ProviderPayload::provider`.
+//! They are a mix of shapes: some are a single `fill="white"` path, others use
+//! `currentColor`, strokes or gradients, and their viewBoxes differ. That does
+//! not matter here, because the renderer applies the icon colour as a filter
+//! over every pixel of the rasterised image, flattening whatever is inside to a
+//! silhouette in the theme's foreground colour. See `window::glyph`.
+//!
+//! Embedding avoids an install step and a runtime file lookup for assets that
+//! never change. The slug is the CodexBar provider id, which is also the id the
+//! `codexbar` CLI reports in `ProviderPayload::provider`.
 
 /// Every vendored icon, keyed by provider id. Sorted, so lookup can bisect.
 const PROVIDER_ICONS: &[(&str, &[u8])] = &[
