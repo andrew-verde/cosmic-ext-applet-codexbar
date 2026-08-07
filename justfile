@@ -36,6 +36,10 @@ build-vendored *args: vendor-extract (build-release '--frozen --offline' args)
 test:
     cargo test
 
+# Re-vendors the provider icons from CodexBar and regenerates src/icons.rs
+update-icons:
+    python3 tools/update-icons.py
+
 _install_icon:
     install -Dm0644 'data/icons/scalable/apps/{{appid}}-symbolic.svg' {{iconsdir}}/{{appid}}-symbolic.svg
 

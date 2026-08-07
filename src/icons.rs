@@ -15,7 +15,13 @@
 //! Embedding avoids an install step and a runtime file lookup for assets that
 //! never change. The slug is the CodexBar provider id, which is also the id the
 //! `codexbar` CLI reports in `ProviderPayload::provider`.
+//!
+//! The table below is generated: run `just update-icons` to re-vendor from
+//! upstream and rewrite it. Do not hand-edit it, and in particular do not
+//! hand-sort it - `provider_icon` bisects, so a mis-ordered entry silently
+//! stops resolving.
 
+// BEGIN GENERATED ICON TABLE
 /// Every vendored icon, keyed by provider id. Sorted, so lookup can bisect.
 const PROVIDER_ICONS: &[(&str, &[u8])] = &[
     ("abacus", include_bytes!("../data/icons/providers/abacus.svg")),
@@ -82,6 +88,7 @@ const PROVIDER_ICONS: &[(&str, &[u8])] = &[
     ("zenmux", include_bytes!("../data/icons/providers/zenmux.svg")),
     ("zoommate", include_bytes!("../data/icons/providers/zoommate.svg")),
 ];
+// END GENERATED ICON TABLE
 
 /// The icon for a CLI provider id, or `None` when nothing is vendored for it.
 ///

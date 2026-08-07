@@ -1,0 +1,58 @@
+name: Update provider icons
+
+# The applet renders whatever providers the codexbar CLI reports, but the brand
+# icons are vendored from CodexBar, so a provider added upstream has no logo
+# here until they are re-vendored. This keeps that from going stale silently:
+# it opens a pull request rather than pushing to main, so an unreviewed asset
+# change never lands on its own.
+
+on:
+  schedule:
+    # Mondays, 05:00 UTC. Upstream adds providers over weeks, not hours.
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Re-vendor icons from CodexBar
+        env:
+          # Only used to raise the API rate limit on the directory listing.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/update-icons.py
+
+      - name: Open a pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          # `token` defaults to ${{ github.token }}, which is enough to push a
+          # branch and open a pull request in this same repository given the
+          # permissions above. Requires "Allow GitHub Actions to create and
+          # approve pull requests" in the repository's Actions settings.
+          branch: automation/update-icons
+          delete-branch: true
+          add-paths: |
+            data/icons/providers
+            src/icons.rs
+          commit-message: Sync provider icons from CodexBar
+          title: Sync provider icons from CodexBar
+          body: |
+            Automated weekly sync of the provider brand icons from
+            [steipete/CodexBar](https://github.com/steipete/CodexBar),
+            run by [`update-icons.yml`](.github/workflows/update-icons.yml).
+
+            `tools/update-icons.py` copies
+            `Sources/CodexBar/Resources/ProviderIcon-<slug>.svg` byte for byte
+            into `data/icons/providers/` and regenerates the `PROVIDER_ICONS`
+            table in `src/icons.rs`. Nothing else is touched, and the table is
+            generated sorted, which is what `provider_icon`'s binary search
+            needs.
+
+            Worth a look before merging: that the added or changed files are
+            only icons and that generated table, and that `cargo test` passes.
