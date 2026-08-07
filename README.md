@@ -127,6 +127,35 @@ rather than being swallowed.
 Unknown keys are ignored and omitted keys keep their default, so the defaults
 above are also exactly the behaviour with no config file at all.
 
+## Provider icons
+
+Every provider CodexBar reports gets a tab automatically — the applet has no
+hardcoded provider list. The brand logos are the one part that does not follow
+along on its own: they are byte-for-byte copies of CodexBar's own
+`ProviderIcon-<slug>.svg` files, vendored into `data/icons/providers/` and
+embedded in the binary. A provider with no vendored icon still gets its tab,
+just with a text-only label.
+
+[`tools/update-icons.py`](tools/update-icons.py) keeps that snapshot current: it
+re-vendors from upstream and regenerates the lookup table in
+[`src/icons.rs`](src/icons.rs), sorted, which is what the binary search there
+needs. Run it any time with:
+
+```sh
+just update-icons
+```
+
+[`.github/workflows/update-icons.yml`](.github/workflows/update-icons.yml) runs
+the same script every Monday and opens a pull request when anything changed.
+
+**If this repository stops being maintained**, that workflow keeps running and
+keeps opening pull requests — but merging needs someone with write access, so
+the pull requests pile up unmerged rather than the icons quietly going stale
+with nobody the wiser. The applet itself carries on working: new providers still
+appear, just without their logos. (The workflow also needs "Allow GitHub Actions
+to create and approve pull requests" enabled in the repository's Actions
+settings.)
+
 ## JSON schema notes
 
 The parser in [`src/codexbar.rs`](src/codexbar.rs) targets the shape documented in
