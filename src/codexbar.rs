@@ -78,6 +78,18 @@ pub struct UsageSnapshot {
     pub tertiary: Option<RateLimitWindow>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub identity: Option<Identity>,
+}
+
+/// Who the numbers belong to. Only `loginMethod` is decoded; the account email
+/// is already carried by `ProviderPayload::account`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Identity {
+    /// Plan or login type, e.g. `plus`, `Antigravity Starter Quota`.
+    #[serde(default)]
+    pub login_method: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -143,6 +155,92 @@ pub struct ProviderError {
     pub message: String,
 }
 
+/// One entry of the `codexbar cost --format json --days 30` array.
+///
+/// The CLI only emits entries for providers that track cost locally (currently
+/// Codex and Claude); others are simply absent rather than erroring, so a
+/// missing entry means "no cost block for this provider".
+///
+/// `sessionCostUSD`/`sessionTokens` are the running totals for the current day,
+/// which is what the macOS app labels "Today" / "Latest tokens".
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostPayload {
+    /// Provider identifier, matching [`ProviderPayload::provider`].
+    pub provider: String,
+    #[serde(default)]
+    pub currency_code: Option<String>,
+    #[serde(default, rename = "sessionCostUSD")]
+    pub session_cost_usd: Option<f64>,
+    #[serde(default)]
+    pub session_tokens: Option<u64>,
+    #[serde(default, rename = "last30DaysCostUSD")]
+    pub last30_days_cost_usd: Option<f64>,
+    #[serde(default)]
+    pub last30_days_tokens: Option<u64>,
+}
+
+impl CostPayload {
+    /// Whether any of the four displayed figures is present.
+    pub fn has_figures(&self) -> bool {
+        self.session_cost_usd.is_some()
+            || self.session_tokens.is_some()
+            || self.last30_days_cost_usd.is_some()
+            || self.last30_days_tokens.is_some()
+    }
+}
+
+/// Format a money amount the way the macOS app does, e.g. `$29.41`.
+///
+/// Only USD is ever reported today, so an unexpected `currencyCode` is appended
+/// rather than guessed at.
+pub fn format_cost(amount: f64, currency_code: Option<&str>) -> String {
+    match currency_code {
+        None | Some("USD") => format!("${amount:.2}"),
+        Some(other) => format!("{amount:.2} {other}"),
+    }
+}
+
+/// Abbreviate a token count, e.g. `19523312` becomes `19.5M`.
+pub fn format_tokens(tokens: u64) -> String {
+    const BILLION: f64 = 1_000_000_000.0;
+    const MILLION: f64 = 1_000_000.0;
+    const THOUSAND: f64 = 1_000.0;
+
+    let value = tokens as f64;
+    if value >= BILLION {
+        format!("{}B", one_decimal(value / BILLION))
+    } else if value >= MILLION {
+        format!("{}M", one_decimal(value / MILLION))
+    } else if value >= THOUSAND {
+        format!("{}K", one_decimal(value / THOUSAND))
+    } else {
+        tokens.to_string()
+    }
+}
+
+/// One decimal place with a trailing `.0` trimmed, so `26.0` reads as `26`.
+fn one_decimal(value: f64) -> String {
+    let text = format!("{value:.1}");
+    match text.strip_suffix(".0") {
+        Some(whole) => whole.to_string(),
+        None => text,
+    }
+}
+
+/// Render a duration in seconds as the CLI does, e.g. `1d 4h`, `3h 49m`, `12m`.
+fn duration_text(seconds: u64) -> String {
+    let minutes = seconds / 60;
+    let hours = minutes / 60;
+    if hours >= 24 {
+        format!("{}d {}h", hours / 24, hours % 24)
+    } else if hours > 0 {
+        format!("{hours}h {}m", minutes % 60)
+    } else {
+        format!("{minutes}m")
+    }
+}
+
 impl ProviderPayload {
     /// Human readable provider name. CodexBar's JSON only carries the provider
     /// id, so the display label is derived here.
@@ -158,6 +256,32 @@ impl ProviderPayload {
                 }
             }
         }
+    }
+}
+
+impl UsageSnapshot {
+    /// Age of the snapshot, e.g. "Updated 1m ago". A snapshot dated in the
+    /// future (clock skew) reads as "just now" rather than a negative age.
+    pub fn updated_text(&self, now: DateTime<Utc>) -> Option<String> {
+        let elapsed = now.signed_duration_since(self.updated_at?);
+        let minutes = elapsed.num_minutes();
+        Some(if minutes < 1 {
+            "Updated just now".to_string()
+        } else if minutes < 60 {
+            format!("Updated {minutes}m ago")
+        } else if elapsed.num_hours() < 24 {
+            format!("Updated {}h ago", elapsed.num_hours())
+        } else {
+            format!("Updated {}d ago", elapsed.num_days())
+        })
+    }
+
+    /// Plan label from `identity.loginMethod`, capitalised, e.g. "Plus".
+    pub fn plan_label(&self) -> Option<String> {
+        let method = self.identity.as_ref()?.login_method.as_deref()?.trim();
+        let mut chars = method.chars();
+        let first = chars.next()?;
+        Some(first.to_uppercase().collect::<String>() + chars.as_str())
     }
 }
 
@@ -229,6 +353,23 @@ impl PaceWindow {
             .map(str::to_string)
             .collect()
     }
+
+    /// The headline clause of `summary`, e.g. "On pace", "31% in reserve".
+    pub fn stage_text(&self) -> Option<String> {
+        self.summary_lines().into_iter().next()
+    }
+
+    /// How long the quota is projected to last, e.g. "Lasts until reset" or
+    /// "Projected empty in 3h 49m".
+    pub fn projection_text(&self) -> Option<String> {
+        if self.will_last_to_reset == Some(true) {
+            return Some("Lasts until reset".to_string());
+        }
+        Some(format!(
+            "Projected empty in {}",
+            duration_text(self.eta_seconds?)
+        ))
+    }
 }
 
 /// Parse the stdout of `codexbar usage --format json`.
@@ -249,34 +390,40 @@ pub fn parse_usage_json(stdout: &str) -> Result<Vec<ProviderPayload>, String> {
 /// payload carrying the `error` field, so a parseable stdout always wins over
 /// the exit status.
 pub async fn fetch_usage() -> Result<Vec<ProviderPayload>, String> {
-    // cosmic-panel applets are launched by the systemd graphical session, which
-    // does not source ~/.bashrc or ~/.profile, so managers that only extend PATH
-    // there (Homebrew's `shellenv`, `~/.local/bin` added by some installers)
-    // are invisible here even though `codexbar` works fine in a terminal.
-    let mut candidates = vec!["codexbar".to_string(), dirs_local_bin()];
-    candidates.extend(linuxbrew_candidates());
+    let output = run_codexbar(&["usage", "--format", "json"]).await?;
+    parse_output(&output, parse_usage_json)
+}
 
-    let mut output = None;
-    for candidate in &candidates {
-        match run_cli(candidate).await {
-            Ok(o) => {
-                output = Some(o);
-                break;
-            }
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            Err(e) => return Err(format!("could not run codexbar: {e}")),
-        }
-    }
-    let Some(output) = output else {
-        return Err(format!(
-            "codexbar CLI not found on PATH, in ~/.local/bin, or in Homebrew's bin dir.\n\
-             Install it from github.com/steipete/CodexBar."
-        ));
-    };
+/// Parse the stdout of `codexbar cost --format json --days 30`.
+pub fn parse_cost_json(stdout: &str) -> Result<Vec<CostPayload>, String> {
+    let start = stdout
+        .find('[')
+        .ok_or_else(|| "no JSON array in codexbar output".to_string())?;
+    serde_json::from_str(&stdout[start..]).map_err(|e| format!("could not parse codexbar JSON: {e}"))
+}
 
+/// Run `codexbar cost --format json --days 30` and parse its output.
+///
+/// `--refresh` is deliberately not passed: the cached read takes well under a
+/// second, which is what makes this safe to call on the same 60s tick as
+/// [`fetch_usage`].
+pub async fn fetch_cost() -> Result<Vec<CostPayload>, String> {
+    let output = run_codexbar(&["cost", "--format", "json", "--days", "30"]).await?;
+    parse_output(&output, parse_cost_json)
+}
+
+/// Turn a completed CLI run into parsed payloads.
+///
+/// The CLI exits non-zero when an individual provider fails but still prints a
+/// payload carrying the `error` field, so a parseable stdout always wins over
+/// the exit status. When stdout is unusable, stderr is the more helpful message.
+fn parse_output<T>(
+    output: &std::process::Output,
+    parse: fn(&str) -> Result<T, String>,
+) -> Result<T, String> {
     let stdout = String::from_utf8_lossy(&output.stdout);
-    match parse_usage_json(&stdout) {
-        Ok(payloads) => Ok(payloads),
+    match parse(&stdout) {
+        Ok(parsed) => Ok(parsed),
         Err(parse_error) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stderr = stderr.trim();
@@ -289,9 +436,30 @@ pub async fn fetch_usage() -> Result<Vec<ProviderPayload>, String> {
     }
 }
 
-async fn run_cli(program: &str) -> std::io::Result<std::process::Output> {
+/// Run the `codexbar` CLI, trying each install location in turn.
+async fn run_codexbar(args: &[&str]) -> Result<std::process::Output, String> {
+    // cosmic-panel applets are launched by the systemd graphical session, which
+    // does not source ~/.bashrc or ~/.profile, so managers that only extend PATH
+    // there (Homebrew's `shellenv`, `~/.local/bin` added by some installers)
+    // are invisible here even though `codexbar` works fine in a terminal.
+    let mut candidates = vec!["codexbar".to_string(), dirs_local_bin()];
+    candidates.extend(linuxbrew_candidates());
+
+    for candidate in &candidates {
+        match run_cli(candidate, args).await {
+            Ok(output) => return Ok(output),
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("could not run codexbar: {e}")),
+        }
+    }
+    Err("codexbar CLI not found on PATH, in ~/.local/bin, or in Homebrew's bin dir.\n\
+         Install it from github.com/steipete/CodexBar."
+        .to_string())
+}
+
+async fn run_cli(program: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
     tokio::process::Command::new(program)
-        .args(["usage", "--format", "json"])
+        .args(args)
         .stdin(Stdio::null())
         .output()
         .await
@@ -408,6 +576,37 @@ mod tests {
         "usage": null,
         "credits": null,
         "error": { "code": 3, "message": "Not signed in", "kind": "auth" }
+      }
+    ]"#;
+
+    /// Real `codexbar cost --format json --days 30` output, trimmed of the
+    /// `totals`/`daily`/`projects` members this applet does not decode. Only
+    /// providers that track cost locally appear at all, which is why there is
+    /// no `antigravity` entry here even though `usage` reports one.
+    const COST: &str = r#"[
+      {
+        "provider": "codex",
+        "source": "local",
+        "currencyCode": "USD",
+        "historyDays": 30,
+        "updatedAt": "2026-08-07T03:39:09Z",
+        "sessionCostUSD": 0,
+        "sessionTokens": 0,
+        "last30DaysCostUSD": 362.66142439,
+        "last30DaysTokens": 557826793,
+        "projects": []
+      },
+      {
+        "provider": "claude",
+        "source": "local",
+        "currencyCode": "USD",
+        "historyDays": 30,
+        "updatedAt": "2026-08-07T03:38:57Z",
+        "sessionCostUSD": 11.125085000000006,
+        "sessionTokens": 19523312,
+        "last30DaysCostUSD": 327.4576672,
+        "last30DaysTokens": 340952636,
+        "projects": []
       }
     ]"#;
 
@@ -599,6 +798,113 @@ mod tests {
 
         // antigravity reports usage but no projection at all.
         assert!(payloads[2].pace.is_none());
+    }
+
+    #[test]
+    fn parses_cost_payload() {
+        let payloads = parse_cost_json(COST).unwrap();
+        assert_eq!(payloads.len(), 2);
+
+        let codex = &payloads[0];
+        assert_eq!(codex.provider, "codex");
+        assert_eq!(codex.currency_code.as_deref(), Some("USD"));
+        assert_eq!(codex.session_cost_usd, Some(0.0));
+        assert_eq!(codex.session_tokens, Some(0));
+        assert_eq!(codex.last30_days_cost_usd, Some(362.66142439));
+        assert_eq!(codex.last30_days_tokens, Some(557826793));
+        assert!(codex.has_figures());
+
+        let claude = &payloads[1];
+        assert_eq!(claude.provider, "claude");
+        assert_eq!(claude.session_tokens, Some(19523312));
+        assert_eq!(claude.last30_days_tokens, Some(340952636));
+
+        // Providers without local cost tracking are absent rather than errored.
+        assert!(!payloads.iter().any(|c| c.provider == "antigravity"));
+    }
+
+    #[test]
+    fn cost_payload_without_figures_is_detected() {
+        let payloads = parse_cost_json(r#"[{"provider": "codex"}]"#).unwrap();
+        assert!(!payloads[0].has_figures());
+        assert!(parse_cost_json("[]").unwrap().is_empty());
+        assert!(parse_cost_json("command not found").is_err());
+    }
+
+    #[test]
+    fn formats_costs_and_token_counts() {
+        assert_eq!(format_cost(0.0, Some("USD")), "$0.00");
+        assert_eq!(format_cost(29.412, None), "$29.41");
+        assert_eq!(format_cost(29.412, Some("EUR")), "29.41 EUR");
+
+        assert_eq!(format_tokens(0), "0");
+        assert_eq!(format_tokens(999), "999");
+        assert_eq!(format_tokens(340_952), "341K");
+        assert_eq!(format_tokens(19_523_312), "19.5M");
+        assert_eq!(format_tokens(26_000_000), "26M");
+        assert_eq!(format_tokens(557_826_793), "557.8M");
+        assert_eq!(format_tokens(2_500_000_000), "2.5B");
+    }
+
+    #[test]
+    fn formats_pace_projection() {
+        let payloads = parse_usage_json(REAL_WORLD).unwrap();
+        let claude = payloads[1].pace.as_ref().unwrap();
+
+        let primary = claude.primary.as_ref().unwrap();
+        assert_eq!(primary.stage_text().as_deref(), Some("On pace"));
+        assert_eq!(
+            primary.projection_text().as_deref(),
+            Some("Projected empty in 3h 49m")
+        );
+
+        // `willLastToReset` wins over any eta.
+        let secondary = claude.secondary.as_ref().unwrap();
+        assert_eq!(secondary.stage_text().as_deref(), Some("31% in reserve"));
+        assert_eq!(
+            secondary.projection_text().as_deref(),
+            Some("Lasts until reset")
+        );
+
+        let codex = payloads[0].pace.as_ref().unwrap().secondary.as_ref().unwrap();
+        assert_eq!(
+            codex.projection_text().as_deref(),
+            Some("Projected empty in 1d 4h")
+        );
+    }
+
+    #[test]
+    fn formats_snapshot_age_and_plan() {
+        let payloads = parse_usage_json(REAL_WORLD).unwrap();
+        let usage = payloads[0].usage.as_ref().unwrap();
+        let updated: DateTime<Utc> = "2026-08-07T02:40:08Z".parse().unwrap();
+
+        assert_eq!(usage.updated_text(updated).as_deref(), Some("Updated just now"));
+        assert_eq!(
+            usage.updated_text(updated + chrono::Duration::minutes(7)).as_deref(),
+            Some("Updated 7m ago")
+        );
+        assert_eq!(
+            usage.updated_text(updated + chrono::Duration::hours(5)).as_deref(),
+            Some("Updated 5h ago")
+        );
+        assert_eq!(
+            usage.updated_text(updated + chrono::Duration::days(3)).as_deref(),
+            Some("Updated 3d ago")
+        );
+        // A snapshot dated in the future must not read as a negative age.
+        assert_eq!(
+            usage.updated_text(updated - chrono::Duration::hours(1)).as_deref(),
+            Some("Updated just now")
+        );
+
+        assert_eq!(usage.plan_label().as_deref(), Some("Plus"));
+        assert_eq!(
+            payloads[2].usage.as_ref().unwrap().plan_label().as_deref(),
+            Some("Antigravity Starter Quota")
+        );
+        // Claude's identity carries no loginMethod.
+        assert!(payloads[1].usage.as_ref().unwrap().plan_label().is_none());
     }
 
     #[test]

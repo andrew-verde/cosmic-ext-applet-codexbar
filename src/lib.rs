@@ -2,7 +2,7 @@ mod codexbar;
 mod config;
 mod window;
 
-pub use codexbar::{ProviderPayload, parse_usage_json};
+pub use codexbar::{CostPayload, ProviderPayload, parse_cost_json, parse_usage_json};
 pub use config::{Config, UsageDisplay};
 
 use window::Window;

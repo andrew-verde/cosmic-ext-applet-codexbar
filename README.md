@@ -4,16 +4,20 @@ A native [COSMIC](https://github.com/pop-os/cosmic-epoch) panel applet that show
 your OpenAI Codex / Claude Code usage limits, in the spirit of the macOS app
 [CodexBar](https://github.com/steipete/CodexBar).
 
-The applet adds a small icon to the COSMIC panel. Clicking (or hovering) it opens
-a popup listing, for every provider CodexBar knows about:
+The applet adds a small icon to the COSMIC panel. Clicking it opens a popup with
+a tab per provider plus an **Overview** tab that condenses every provider to one
+line. A provider's own tab shows:
 
-- the provider label and account,
+- the provider label, account, snapshot age and plan,
 - session / weekly / monthly usage as a percentage plus a progress bar,
 - when each limit window resets,
 - CodexBar's pace projection ("On pace", "Projected empty in 3h 50m"),
+- today's and the last 30 days' cost and token counts,
 - remaining credits, when the provider reports them.
 
-State is refreshed every 60 seconds, and again whenever the popup is opened.
+The popup body scrolls, so extra providers or windows never push content out of
+view. State is refreshed every 60 seconds, and again whenever the popup is
+opened.
 
 ## How it works
 
@@ -22,10 +26,13 @@ CLI that ships with CodexBar:
 
 ```sh
 codexbar usage --format json
+codexbar cost --format json --days 30
 ```
 
 and renders the resulting JSON. If the CLI is missing, fails, or reports an error
-for a provider, the popup shows that error instead of going blank.
+for a provider, the popup shows that error instead of going blank. Only Codex and
+Claude appear in the `cost` output; providers missing from it simply have no cost
+block. A failing `cost` call never blanks the usage display.
 
 ## Prerequisites
 
@@ -99,9 +106,10 @@ the popup rather than being swallowed.
 | `show_monthly` | bool | `true` | Show the third window (`usage.tertiary`), normally monthly. |
 | `show_reset_countdown` | bool | `true` | Show the "Resets in 2h 30m" line under each visible window. When `false` the percentage and progress bar remain. |
 | `show_pace` | bool | `true` | Show CodexBar's pace projection under each visible window, e.g. "On pace", "31% in reserve", "Projected empty in 3h 50m". Providers that report no projection are unaffected. |
+| `show_cost` | bool | `true` | Show the cost / token block ("Today", "30d cost", "Latest tokens", "30d tokens"). Only Codex and Claude report cost data; other providers omit the block. |
 | `show_credits` | bool | `true` | Show the remaining-credits line for providers that report credits. |
 | `show_account` | bool | `true` | Show the account (usually an email address) beside the provider name. |
-| `usage_display` | string | `"used"` | `"used"` reports quota consumed, `"remaining"` reports quota left (percentages and bars are inverted). The popup captions which mode is active. An unrecognised value falls back to `"used"`. |
+| `usage_display` | string | `"used"` | `"used"` reports quota consumed, `"remaining"` reports quota left (percentages and bars are inverted). Each line names the mode, e.g. "20% used". An unrecognised value falls back to `"used"`. |
 | `background_opacity` | float | `1.0` | Alpha of the popup background, from `0.0` (fully transparent) to `1.0` (the unchanged COSMIC popup background). Out-of-range values are clamped. |
 
 Unknown keys are ignored and omitted keys keep their default, so the defaults

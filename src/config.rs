@@ -49,6 +49,11 @@ show_reset_countdown = true
 # not report a projection are unaffected.
 show_pace = true
 
+# Show the cost / token block ("Today", "30d cost", "Latest tokens",
+# "30d tokens"). Only Codex and Claude report cost data; other providers simply
+# omit the block.
+show_cost = true
+
 # Show the remaining-credits line for providers that report credits.
 show_credits = true
 
@@ -80,6 +85,8 @@ pub struct Config {
     pub show_reset_countdown: bool,
     /// Show CodexBar's pace projection under each visible window.
     pub show_pace: bool,
+    /// Show the cost / token block for providers that report cost data.
+    pub show_cost: bool,
     /// Show the remaining-credits caption.
     pub show_credits: bool,
     /// Show the account caption in the provider header.
@@ -149,6 +156,7 @@ impl Default for Config {
             show_monthly: true,
             show_reset_countdown: true,
             show_pace: true,
+            show_cost: true,
             show_credits: true,
             show_account: true,
             usage_display: UsageDisplay::Used,
@@ -225,6 +233,7 @@ mod tests {
         show_monthly = false
         show_reset_countdown = false
         show_pace = false
+        show_cost = false
         show_credits = false
         show_account = false
         usage_display = "remaining"
@@ -245,6 +254,7 @@ mod tests {
         assert!(config.show_monthly);
         assert!(config.show_reset_countdown);
         assert!(config.show_pace);
+        assert!(config.show_cost);
         assert!(config.show_credits);
         assert!(config.show_account);
         assert_eq!(config.usage_display, UsageDisplay::Used);
@@ -264,6 +274,7 @@ mod tests {
         assert!(!config.show_monthly);
         assert!(!config.show_reset_countdown);
         assert!(!config.show_pace);
+        assert!(!config.show_cost);
         assert!(!config.show_credits);
         assert!(!config.show_account);
         assert_eq!(config.usage_display, UsageDisplay::Remaining);
