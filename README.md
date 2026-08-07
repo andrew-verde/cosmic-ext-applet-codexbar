@@ -4,6 +4,14 @@ A native [COSMIC](https://github.com/pop-os/cosmic-epoch) panel applet that show
 your OpenAI Codex / Claude Code usage limits, in the spirit of the macOS app
 [CodexBar](https://github.com/steipete/CodexBar).
 
+![Screenshot of the applet's popup, showing the Claude tab with session and weekly usage, pace projection, and cost/token stats](docs/screenshot.png)
+
+Every provider CodexBar itself supports works here too — this reads whatever
+`codexbar usage`/`codexbar cost` report, so it's not limited to Codex and
+Claude. It also ships icons for CodexBar's full provider list (OpenAI, Claude,
+Gemini, Copilot, Cursor, Mistral, DeepSeek, Grok, and dozens more), not just
+the two or three most common ones.
+
 The applet adds a small icon to the COSMIC panel. Clicking it opens a popup with
 a tab per provider — each showing that provider's logo over its name — plus an
 **Overview** tab that condenses every provider to one line. The tab strip
