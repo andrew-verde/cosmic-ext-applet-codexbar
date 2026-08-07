@@ -39,7 +39,11 @@ const MAX_BODY_HEIGHT: f32 = 460.0;
 const TAB_ICON_SIZE: u16 = 18;
 
 /// Edge length of a provider icon beside the provider name.
-const HEADER_ICON_SIZE: u16 = 20;
+const HEADER_ICON_SIZE: u16 = 24;
+
+/// Gap between the major blocks of a provider's tab (header, each rate limit
+/// window, cost). The macOS app leans on whitespace to separate these.
+const BLOCK_SPACING: u16 = 14;
 
 /// Identifies the autosizing popup body to the shell, mirroring the private
 /// `AUTOSIZE_ID` that `cosmic::applet::Context::popup_container` uses.
@@ -301,12 +305,16 @@ impl Window {
     /// One condensed line per provider for the Overview tab: enough to scan
     /// many providers at once without the full per-window layout.
     fn provider_summary<'a>(&'a self, payload: &'a ProviderPayload) -> Element<'a, Message> {
+        let mut title = widget::Row::new().spacing(6).align_y(Vertical::Center);
+        if let Some(icon) = provider_icon(&payload.provider) {
+            title = title.push(provider_glyph(icon, TAB_ICON_SIZE));
+        }
+        title = title.push(widget::text::title4(payload.label()));
+
         let mut column = widget::Column::new()
             .spacing(4)
-            .push(split_row(
-                widget::text::body(payload.label()),
-                account_caption(payload, &self.config),
-            ));
+            .width(Length::Fill)
+            .push(split_row(title, account_caption(payload, &self.config)));
 
         if let Some(error) = &payload.error {
             return column
@@ -334,7 +342,7 @@ impl Window {
                 self.config.usage_display.fraction(window.fraction()),
             ))
             .push(split_row(
-                widget::text::caption(self.percent_text(window)),
+                widget::text::body(self.percent_text(window)),
                 widget::text::caption(window.window_label("Usage")),
             ));
         column.into()
@@ -343,32 +351,40 @@ impl Window {
     /// The full macOS-style layout for one provider.
     fn provider_detail<'a>(&'a self, payload: &'a ProviderPayload) -> Element<'a, Message> {
         let now = Utc::now();
-        let mut title = widget::Row::new().spacing(6).align_y(Vertical::Center);
+        let mut title = widget::Row::new().spacing(8).align_y(Vertical::Center);
         if let Some(icon) = provider_icon(&payload.provider) {
             title = title.push(provider_glyph(icon, HEADER_ICON_SIZE));
         }
-        title = title.push(widget::text::title4(payload.label()));
+        title = title.push(widget::text::title3(payload.label()));
 
-        let mut column = widget::Column::new()
-            .spacing(4)
+        // The header's two rows belong together, so they are their own column;
+        // the outer spacing is what separates the major blocks.
+        let mut header = widget::Column::new()
+            .spacing(2)
+            .width(Length::Fill)
             .push(split_row(title, account_caption(payload, &self.config)));
+
+        let mut column = widget::Column::new().spacing(BLOCK_SPACING).width(Length::Fill);
 
         if let Some(error) = &payload.error {
             return column
+                .push(header)
                 .push(widget::text::body(error.message.clone()).width(Length::Fill))
                 .into();
         }
 
         let Some(usage) = &payload.usage else {
             return column
+                .push(header)
                 .push(widget::text::body("No usage data reported.").width(Length::Fill))
                 .into();
         };
 
-        column = column.push(split_row(
+        header = header.push(split_row(
             widget::text::caption(usage.updated_text(now).unwrap_or_default()),
             widget::text::caption(usage.plan_label().unwrap_or_default()),
         ));
+        column = column.push(header);
 
         let pace = payload.pace.as_ref();
         let windows = [
@@ -441,14 +457,15 @@ impl Window {
         };
 
         let mut column = widget::Column::new()
-            .spacing(4)
+            .spacing(6)
+            .width(Length::Fill)
             .push(widget::text::heading(window.window_label(fallback)))
             .push(widget::determinate_linear(
                 self.config.usage_display.fraction(window.fraction()),
             ))
             .push(split_row(
-                widget::text::body(self.percent_text(window)),
-                widget::text::caption(reset.unwrap_or_default()),
+                widget::text::title4(self.percent_text(window)),
+                widget::text::body(reset.unwrap_or_default()),
             ));
 
         if self.config.show_pace
@@ -575,17 +592,32 @@ fn refresh_task() -> Task<Action<Message>> {
     ])
 }
 
-/// The layout used throughout the popup: a left-aligned item that takes the
-/// slack, and a counterpart flush against the right edge.
+/// The layout used throughout the popup: a left-aligned label and a counterpart
+/// flush against the right edge.
+///
+/// The slack deliberately sits in the *right* cell. `Row` defaults to
+/// `Length::Shrink`, which makes `layout::flex::resolve` treat the main axis as
+/// compressed and lay every child out in document order, each consuming from
+/// the space the previous one left. A `Length::Fill` cell resolves to the whole
+/// of what it is offered, so a fill-first row starved whatever followed it of
+/// width and the trailing text word-wrapped to one word per line, dropping the
+/// spaces at each wrap point. Putting the shrink cell first means it measures
+/// naturally and the fill cell takes what is genuinely left over, under either
+/// compression mode.
 fn split_row<'a>(
     left: impl Into<Element<'a, Message>>,
     right: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     widget::Row::new()
+        .width(Length::Fill)
         .spacing(8)
         .align_y(Vertical::Center)
-        .push(widget::container(left).width(Length::Fill))
-        .push(right)
+        .push(left)
+        .push(
+            widget::container(right)
+                .width(Length::Fill)
+                .align_x(Horizontal::Right),
+        )
         .into()
 }
 
@@ -623,22 +655,23 @@ fn cost_block<'a>(cost: &'a CostPayload) -> Element<'a, Message> {
     };
 
     widget::Column::new()
-        .spacing(4)
+        .spacing(6)
+        .width(Length::Fill)
         .push(split_row(
             widget::text::caption("Today"),
             widget::text::caption("30d cost"),
         ))
         .push(split_row(
-            widget::text::body(money(cost.session_cost_usd)),
-            widget::text::body(money(cost.last30_days_cost_usd)),
+            widget::text::title4(money(cost.session_cost_usd)),
+            widget::text::title4(money(cost.last30_days_cost_usd)),
         ))
         .push(split_row(
             widget::text::caption("Latest tokens"),
             widget::text::caption("30d tokens"),
         ))
         .push(split_row(
-            widget::text::body(tokens(cost.session_tokens)),
-            widget::text::body(tokens(cost.last30_days_tokens)),
+            widget::text::title4(tokens(cost.session_tokens)),
+            widget::text::title4(tokens(cost.last30_days_tokens)),
         ))
         .into()
 }

@@ -228,6 +228,17 @@ fn one_decimal(value: f64) -> String {
     }
 }
 
+/// Replace the exotic spaces Swift's date formatting emits with plain ones.
+///
+/// Codex reports `resetDescription` as `Aug 10 at 11:39\u{202f}PM`; a narrow
+/// no-break space is not in every UI font, and a missing glyph renders as no
+/// gap at all rather than as a fallback space.
+fn normalise_spaces(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect()
+}
+
 /// Render a duration in seconds as the CLI does, e.g. `1d 4h`, `3h 49m`, `12m`.
 fn duration_text(seconds: u64) -> String {
     let minutes = seconds / 60;
@@ -314,10 +325,10 @@ impl RateLimitWindow {
     /// "resets Resets 3:50pm (Asia/Tokyo)".
     pub fn reset_text(&self, now: DateTime<Utc>) -> Option<String> {
         if let Some(description) = &self.reset_description {
-            let description = description.trim();
+            let description = normalise_spaces(description.trim());
             if !description.is_empty() {
                 if description.to_lowercase().starts_with("reset") {
-                    return Some(description.to_string());
+                    return Some(description);
                 }
                 return Some(format!("Resets {description}"));
             }
@@ -798,6 +809,32 @@ mod tests {
 
         // antigravity reports usage but no projection at all.
         assert!(payloads[2].pace.is_none());
+    }
+
+    /// Codex really does report a narrow no-break space before the meridiem.
+    const NARROW_SPACE: &str = r#"[
+      {
+        "provider": "codex",
+        "usage": {
+          "primary": { "resetDescription": "Aug 10 at 11:39\u202fPM" }
+        }
+      }
+    ]"#;
+
+    #[test]
+    fn normalises_exotic_spaces_in_reset_description() {
+        let payloads = parse_usage_json(NARROW_SPACE).unwrap();
+        let window = payloads[0]
+            .usage
+            .as_ref()
+            .unwrap()
+            .primary
+            .as_ref()
+            .unwrap();
+
+        let text = window.reset_text(Utc::now()).unwrap();
+        assert_eq!(text, "Resets Aug 10 at 11:39 PM");
+        assert!(text.chars().all(|c| !c.is_whitespace() || c == ' '));
     }
 
     #[test]
