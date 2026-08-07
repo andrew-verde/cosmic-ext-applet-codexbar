@@ -10,6 +10,7 @@ a popup listing, for every provider CodexBar knows about:
 - the provider label and account,
 - session / weekly / monthly usage as a percentage plus a progress bar,
 - when each limit window resets,
+- CodexBar's pace projection ("On pace", "Projected empty in 3h 50m"),
 - remaining credits, when the provider reports them.
 
 State is refreshed every 60 seconds, and again whenever the popup is opened.
@@ -96,9 +97,11 @@ the popup rather than being swallowed.
 | `show_session` | bool | `true` | Show the shortest rolling window (`usage.primary`). |
 | `show_weekly` | bool | `true` | Show the second window (`usage.secondary`), normally weekly. |
 | `show_monthly` | bool | `true` | Show the third window (`usage.tertiary`), normally monthly. |
-| `show_reset_countdown` | bool | `true` | Show the "resets in 2h 30m" text beside each visible window. When `false` the percentage and progress bar remain. |
+| `show_reset_countdown` | bool | `true` | Show the "Resets in 2h 30m" line under each visible window. When `false` the percentage and progress bar remain. |
+| `show_pace` | bool | `true` | Show CodexBar's pace projection under each visible window, e.g. "On pace", "31% in reserve", "Projected empty in 3h 50m". Providers that report no projection are unaffected. |
 | `show_credits` | bool | `true` | Show the remaining-credits line for providers that report credits. |
 | `show_account` | bool | `true` | Show the account (usually an email address) beside the provider name. |
+| `usage_display` | string | `"used"` | `"used"` reports quota consumed, `"remaining"` reports quota left (percentages and bars are inverted). The popup captions which mode is active. An unrecognised value falls back to `"used"`. |
 | `background_opacity` | float | `1.0` | Alpha of the popup background, from `0.0` (fully transparent) to `1.0` (the unchanged COSMIC popup background). Out-of-range values are clamped. |
 
 Unknown keys are ignored and omitted keys keep their default, so the defaults
@@ -114,7 +117,8 @@ lowerCamelCase keys and ISO 8601 dates.
 
 Only the fields this applet displays are decoded — `provider`, `account`,
 `version`, `source`, `usage.{primary,secondary,tertiary}.{usedPercent,
-windowMinutes,resetsAt,resetDescription}`, `usage.updatedAt`, `credits.remaining`
+windowMinutes,resetsAt,resetDescription}`, `usage.updatedAt`,
+`pace.{primary,secondary,tertiary}`, `credits.remaining`
 and `error.message`. Everything is optional and unknown keys are ignored, so a
 CodexBar release that adds or renames fields degrades gracefully rather than
 breaking the applet.

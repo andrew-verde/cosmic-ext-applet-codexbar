@@ -56,6 +56,10 @@ pub struct ProviderPayload {
     pub usage: Option<UsageSnapshot>,
     #[serde(default)]
     pub credits: Option<CreditsSnapshot>,
+    /// CodexBar's burn-rate projection, keyed by the same window names as
+    /// `usage`. Absent for providers that cannot project (e.g. `antigravity`).
+    #[serde(default)]
+    pub pace: Option<PaceSnapshot>,
     #[serde(default)]
     pub error: Option<ProviderError>,
 }
@@ -88,6 +92,42 @@ pub struct RateLimitWindow {
     /// Human readable reset hint (e.g. "today at 3:00 PM") when the CLI has one.
     #[serde(default)]
     pub reset_description: Option<String>,
+}
+
+/// Top-level `pace` object, mirroring [`UsageSnapshot`]'s window keys.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaceSnapshot {
+    #[serde(default)]
+    pub primary: Option<PaceWindow>,
+    #[serde(default)]
+    pub secondary: Option<PaceWindow>,
+    #[serde(default)]
+    pub tertiary: Option<PaceWindow>,
+}
+
+/// Projection for one rate limit window. Every field is optional: the CLI omits
+/// whichever parts it cannot compute (`etaSeconds` is missing when usage lasts
+/// to the reset, for instance).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaceWindow {
+    /// Burn rate relative to a linear budget, e.g. `onTrack`, `farAhead`.
+    #[serde(default)]
+    pub stage: Option<String>,
+    /// Signed distance from the expected usage, in percentage points.
+    #[serde(default)]
+    pub delta_percent: Option<f64>,
+    #[serde(default)]
+    pub expected_used_percent: Option<f64>,
+    #[serde(default)]
+    pub will_last_to_reset: Option<bool>,
+    #[serde(default)]
+    pub eta_seconds: Option<u64>,
+    /// Pre-rendered summary, e.g.
+    /// "25% in deficit | Expected 50% used | Runs out in 1d 4h".
+    #[serde(default)]
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -142,26 +182,52 @@ impl RateLimitWindow {
 
     /// Reset text: the CLI's own description when present, otherwise a
     /// countdown computed from `resetsAt`.
+    ///
+    /// `resetDescription` is not consistently phrased across providers - Claude
+    /// sends "Resets 3:50pm (Asia/Tokyo)" while Codex sends the bare
+    /// "Aug 10 at 11:39 PM" - so the "Resets" prefix is only added when the
+    /// description does not already carry it. Blindly prefixing produced
+    /// "resets Resets 3:50pm (Asia/Tokyo)".
     pub fn reset_text(&self, now: DateTime<Utc>) -> Option<String> {
         if let Some(description) = &self.reset_description {
+            let description = description.trim();
             if !description.is_empty() {
-                return Some(format!("resets {description}"));
+                if description.to_lowercase().starts_with("reset") {
+                    return Some(description.to_string());
+                }
+                return Some(format!("Resets {description}"));
             }
         }
         let resets_at = self.resets_at?;
         let remaining = resets_at.signed_duration_since(now);
         if remaining.num_seconds() <= 0 {
-            return Some("resetting now".to_string());
+            return Some("Resetting now".to_string());
         }
         let hours = remaining.num_hours();
         let minutes = remaining.num_minutes() % 60;
         if hours >= 24 {
-            Some(format!("resets in {}d {}h", hours / 24, hours % 24))
+            Some(format!("Resets in {}d {}h", hours / 24, hours % 24))
         } else if hours > 0 {
-            Some(format!("resets in {hours}h {minutes}m"))
+            Some(format!("Resets in {hours}h {minutes}m"))
         } else {
-            Some(format!("resets in {minutes}m"))
+            Some(format!("Resets in {minutes}m"))
         }
+    }
+}
+
+impl PaceWindow {
+    /// The CLI's `summary` split into its pipe-separated clauses, so a narrow
+    /// popup can stack them instead of wrapping one long line.
+    pub fn summary_lines(&self) -> Vec<String> {
+        let Some(summary) = &self.summary else {
+            return Vec::new();
+        };
+        summary
+            .split('|')
+            .map(str::trim)
+            .filter(|clause| !clause.is_empty())
+            .map(str::to_string)
+            .collect()
     }
 }
 
@@ -382,7 +448,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             claude_primary.reset_text(Utc::now()).as_deref(),
-            Some("resets today at 3:00 PM")
+            Some("Resets today at 3:00 PM")
         );
     }
 
@@ -401,7 +467,7 @@ mod tests {
         assert_eq!(secondary.window_label("Secondary"), "Weekly");
         assert_eq!(
             secondary.reset_text(Utc::now()).as_deref(),
-            Some("resets Aug 10 at 11:39 PM")
+            Some("Resets Aug 10 at 11:39 PM")
         );
 
         let claude = &payloads[1];
@@ -410,6 +476,17 @@ mod tests {
         assert_eq!(
             claude_usage.primary.as_ref().unwrap().window_label("P"),
             "Session"
+        );
+        // Claude's own description already starts with "Resets", so it is used
+        // verbatim rather than double-labelled.
+        assert_eq!(
+            claude_usage
+                .primary
+                .as_ref()
+                .unwrap()
+                .reset_text(Utc::now())
+                .as_deref(),
+            Some("Resets 3:50pm (Asia/Tokyo)")
         );
 
         // antigravity's windows carry no `windowMinutes` at all, only usedPercent/resetsAt.
@@ -452,7 +529,7 @@ mod tests {
             .primary
             .as_ref()
             .unwrap();
-        assert_eq!(primary.reset_text(now).as_deref(), Some("resets in 2h 0m"));
+        assert_eq!(primary.reset_text(now).as_deref(), Some("Resets in 2h 0m"));
 
         let secondary = payloads[0]
             .usage
@@ -463,7 +540,77 @@ mod tests {
             .unwrap();
         assert_eq!(
             secondary.reset_text(now).as_deref(),
-            Some("resets in 23h 45m")
+            Some("Resets in 23h 45m")
         );
+    }
+
+    #[test]
+    fn parses_pace_from_documented_shape() {
+        let payloads = parse_usage_json(MULTI_PROVIDER).unwrap();
+        let pace = payloads[0].pace.as_ref().unwrap();
+        let primary = pace.primary.as_ref().unwrap();
+        assert_eq!(primary.stage.as_deref(), Some("ahead"));
+        assert_eq!(primary.delta_percent, Some(12.0));
+        assert_eq!(primary.expected_used_percent, Some(16.0));
+        assert_eq!(primary.will_last_to_reset, Some(false));
+        assert_eq!(primary.eta_seconds, Some(9000));
+        assert_eq!(primary.summary_lines(), vec!["12% in deficit".to_string()]);
+        assert!(pace.secondary.is_none());
+
+        // The second provider has no `pace` object at all.
+        assert!(payloads[1].pace.is_none());
+    }
+
+    #[test]
+    fn parses_pace_from_real_world_payload() {
+        let payloads = parse_usage_json(REAL_WORLD).unwrap();
+
+        let codex = payloads[0].pace.as_ref().unwrap();
+        assert!(codex.primary.is_none());
+        let codex_secondary = codex.secondary.as_ref().unwrap();
+        assert_eq!(codex_secondary.stage.as_deref(), Some("farAhead"));
+        assert_eq!(codex_secondary.delta_percent, Some(25.0));
+        assert_eq!(codex_secondary.eta_seconds, Some(100804));
+        assert_eq!(
+            codex_secondary.summary_lines(),
+            vec![
+                "25% in deficit".to_string(),
+                "Expected 50% used".to_string(),
+                "Runs out in 1d 4h".to_string(),
+            ]
+        );
+
+        let claude = payloads[1].pace.as_ref().unwrap();
+        let claude_primary = claude.primary.as_ref().unwrap();
+        assert_eq!(claude_primary.stage.as_deref(), Some("onTrack"));
+        assert_eq!(
+            claude_primary.summary_lines(),
+            vec![
+                "On pace".to_string(),
+                "Expected 17% used".to_string(),
+                "Projected empty in 3h 50m".to_string(),
+            ]
+        );
+        let claude_secondary = claude.secondary.as_ref().unwrap();
+        assert_eq!(claude_secondary.delta_percent, Some(-31.0));
+        assert_eq!(claude_secondary.will_last_to_reset, Some(true));
+        assert_eq!(claude_secondary.eta_seconds, None);
+        assert!(claude.tertiary.is_none());
+
+        // antigravity reports usage but no projection at all.
+        assert!(payloads[2].pace.is_none());
+    }
+
+    #[test]
+    fn pace_without_summary_has_no_lines() {
+        let window = PaceWindow {
+            stage: None,
+            delta_percent: None,
+            expected_used_percent: None,
+            will_last_to_reset: None,
+            eta_seconds: None,
+            summary: None,
+        };
+        assert!(window.summary_lines().is_empty());
     }
 }

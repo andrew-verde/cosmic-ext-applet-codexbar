@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 /// Directory under `$XDG_CONFIG_HOME` holding `config.toml`.
 const CONFIG_DIR: &str = "cosmic-ext-applet-codexbar";
@@ -44,11 +44,21 @@ show_monthly = true
 # percentage and progress bar are still shown, only the reset text is dropped.
 show_reset_countdown = true
 
+# Show CodexBar's pace projection under each window, e.g.
+# "On pace", "31% in reserve", "Projected empty in 3h 50m". Providers that do
+# not report a projection are unaffected.
+show_pace = true
+
 # Show the remaining-credits line for providers that report credits.
 show_credits = true
 
 # Show the account (usually an email address) next to the provider name.
 show_account = true
+
+# Whether percentages and progress bars report quota consumed ("used", the
+# default) or quota left ("remaining"). The popup always labels which mode is
+# active. An unrecognised value falls back to "used".
+usage_display = "used"
 
 # Opacity of the popup background, from 0.0 (fully transparent) to 1.0
 # (the default, unchanged COSMIC popup background). Values outside that range
@@ -66,14 +76,69 @@ pub struct Config {
     pub show_weekly: bool,
     /// Show `usage.tertiary`, normally the monthly window.
     pub show_monthly: bool,
-    /// Show the reset countdown caption beside each visible window.
+    /// Show the reset countdown caption under each visible window.
     pub show_reset_countdown: bool,
+    /// Show CodexBar's pace projection under each visible window.
+    pub show_pace: bool,
     /// Show the remaining-credits caption.
     pub show_credits: bool,
     /// Show the account caption in the provider header.
     pub show_account: bool,
+    /// Report quota consumed or quota left.
+    #[serde(deserialize_with = "deserialize_usage_display")]
+    pub usage_display: UsageDisplay,
     /// Alpha multiplier for the popup background, clamped to `0.0..=1.0`.
     pub background_opacity: f32,
+}
+
+/// Whether a window's percentage and progress bar describe how much quota has
+/// been consumed or how much is left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UsageDisplay {
+    #[default]
+    Used,
+    Remaining,
+}
+
+impl UsageDisplay {
+    /// The percentage to display for a window that is `used_percent` consumed.
+    pub fn percent(self, used_percent: f64) -> f64 {
+        match self {
+            UsageDisplay::Used => used_percent,
+            UsageDisplay::Remaining => 100.0 - used_percent,
+        }
+    }
+
+    /// The progress bar fraction matching [`UsageDisplay::percent`].
+    pub fn fraction(self, used_fraction: f32) -> f32 {
+        match self {
+            UsageDisplay::Used => used_fraction,
+            UsageDisplay::Remaining => 1.0 - used_fraction,
+        }
+    }
+
+    /// Word for the active mode, shown in the popup so the numbers are never
+    /// ambiguous.
+    pub fn label(self) -> &'static str {
+        match self {
+            UsageDisplay::Used => "used",
+            UsageDisplay::Remaining => "remaining",
+        }
+    }
+}
+
+/// Read `usage_display` leniently: anything other than `"remaining"` means
+/// `"used"`, so a typo degrades to the default instead of rejecting the whole
+/// file.
+fn deserialize_usage_display<'de, D>(deserializer: D) -> Result<UsageDisplay, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(match raw.trim().to_lowercase().as_str() {
+        "remaining" => UsageDisplay::Remaining,
+        _ => UsageDisplay::Used,
+    })
 }
 
 impl Default for Config {
@@ -83,8 +148,10 @@ impl Default for Config {
             show_weekly: true,
             show_monthly: true,
             show_reset_countdown: true,
+            show_pace: true,
             show_credits: true,
             show_account: true,
+            usage_display: UsageDisplay::Used,
             background_opacity: 1.0,
         }
     }
@@ -157,8 +224,10 @@ mod tests {
         show_weekly = false
         show_monthly = false
         show_reset_countdown = false
+        show_pace = false
         show_credits = false
         show_account = false
+        usage_display = "remaining"
         background_opacity = 0.75
     "#;
 
@@ -175,8 +244,10 @@ mod tests {
         assert!(config.show_weekly);
         assert!(config.show_monthly);
         assert!(config.show_reset_countdown);
+        assert!(config.show_pace);
         assert!(config.show_credits);
         assert!(config.show_account);
+        assert_eq!(config.usage_display, UsageDisplay::Used);
         assert_eq!(config.background_opacity, 1.0);
     }
 
@@ -192,9 +263,45 @@ mod tests {
         assert!(!config.show_weekly);
         assert!(!config.show_monthly);
         assert!(!config.show_reset_countdown);
+        assert!(!config.show_pace);
         assert!(!config.show_credits);
         assert!(!config.show_account);
+        assert_eq!(config.usage_display, UsageDisplay::Remaining);
         assert_eq!(config.background_opacity, 0.75);
+    }
+
+    #[test]
+    fn parses_both_usage_display_modes() {
+        assert_eq!(
+            parse_config(r#"usage_display = "used""#)
+                .unwrap()
+                .usage_display,
+            UsageDisplay::Used
+        );
+        assert_eq!(
+            parse_config(r#"usage_display = "remaining""#)
+                .unwrap()
+                .usage_display,
+            UsageDisplay::Remaining
+        );
+    }
+
+    #[test]
+    fn unrecognised_usage_display_falls_back_to_used() {
+        let config = parse_config(r#"usage_display = "reamining""#).unwrap();
+        assert_eq!(config.usage_display, UsageDisplay::Used);
+        // The rest of the file still applies.
+        assert!(config.show_pace);
+    }
+
+    #[test]
+    fn usage_display_inverts_only_in_remaining_mode() {
+        assert_eq!(UsageDisplay::Used.percent(28.0), 28.0);
+        assert_eq!(UsageDisplay::Remaining.percent(28.0), 72.0);
+        assert!((UsageDisplay::Used.fraction(0.28) - 0.28).abs() < 1e-6);
+        assert!((UsageDisplay::Remaining.fraction(0.28) - 0.72).abs() < 1e-6);
+        assert_eq!(UsageDisplay::Used.label(), "used");
+        assert_eq!(UsageDisplay::Remaining.label(), "remaining");
     }
 
     #[test]

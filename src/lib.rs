@@ -3,7 +3,7 @@ mod config;
 mod window;
 
 pub use codexbar::{ProviderPayload, parse_usage_json};
-pub use config::Config;
+pub use config::{Config, UsageDisplay};
 
 use window::Window;
 

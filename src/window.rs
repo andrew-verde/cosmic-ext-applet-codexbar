@@ -143,7 +143,9 @@ impl Application for Window {
                     "Enable one with `codexbar config enable --provider <id>`.",
                 )),
             State::Loaded(payloads) => {
-                let mut column = widget::Column::new().spacing(12);
+                let mut column = widget::Column::new().spacing(12).push(widget::text::caption(
+                    format!("Showing: {}", self.config.usage_display.label()),
+                ));
                 for payload in payloads {
                     column = column.push(provider_view(payload, &self.config));
                 }
@@ -245,35 +247,68 @@ fn provider_view<'a>(payload: &'a ProviderPayload, config: &Config) -> Element<'
     };
 
     let now = Utc::now();
+    let pace = payload.pace.as_ref();
     let windows = [
-        (usage.primary.as_ref(), "Primary", config.show_session),
-        (usage.secondary.as_ref(), "Secondary", config.show_weekly),
-        (usage.tertiary.as_ref(), "Tertiary", config.show_monthly),
+        (
+            usage.primary.as_ref(),
+            "Primary",
+            config.show_session,
+            pace.and_then(|p| p.primary.as_ref()),
+        ),
+        (
+            usage.secondary.as_ref(),
+            "Secondary",
+            config.show_weekly,
+            pace.and_then(|p| p.secondary.as_ref()),
+        ),
+        (
+            usage.tertiary.as_ref(),
+            "Tertiary",
+            config.show_monthly,
+            pace.and_then(|p| p.tertiary.as_ref()),
+        ),
     ];
 
     // `any` tracks whether the *data* is present, not whether it is displayed,
     // so hiding every window with the config still leaves the provider silent
     // rather than claiming nothing was reported.
     let mut any = false;
-    for (window, fallback, show) in windows {
+    for (window, fallback, show, pace) in windows {
         let Some(window) = window else { continue };
         any = true;
         if !show {
             continue;
         }
-        let used = window.used_percent.unwrap_or(0.0);
-        let mut row = widget::Row::new()
-            .spacing(8)
-            .push(widget::text::body(window.window_label(fallback)).width(Length::Fixed(80.0)))
-            .push(widget::text::body(format!("{used:.0}%")));
+        let percent = config.usage_display.percent(window.used_percent.unwrap_or(0.0));
+        // The label/percent row is kept short and every caption goes on its own
+        // full-width line below it: crammed into the row, long strings such as
+        // "Resets Aug 11, 1am (Asia/Tokyo)" had no room left to wrap in a popup
+        // that is at most 420px wide.
+        column = column
+            .push(
+                widget::Row::new()
+                    .spacing(8)
+                    .push(
+                        widget::text::body(window.window_label(fallback))
+                            .width(Length::Fixed(80.0)),
+                    )
+                    .push(widget::text::body(format!("{percent:.0}%"))),
+            )
+            .push(widget::determinate_linear(
+                config.usage_display.fraction(window.fraction()),
+            ));
         if config.show_reset_countdown
             && let Some(reset) = window.reset_text(now)
         {
-            row = row.push(widget::text::caption(reset));
+            column = column.push(widget::text::caption(reset).width(Length::Fill));
         }
-        column = column
-            .push(row)
-            .push(widget::determinate_linear(window.fraction()));
+        if config.show_pace
+            && let Some(pace) = pace
+        {
+            for line in pace.summary_lines() {
+                column = column.push(widget::text::caption(line).width(Length::Fill));
+            }
+        }
     }
 
     if !any {
