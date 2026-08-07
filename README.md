@@ -76,6 +76,34 @@ Remove it again with `sudo just uninstall`. Run the unit tests with `just test`.
 You may need to log out and back in (or restart `cosmic-panel`) before a
 newly installed applet appears in that list.
 
+## Configuration
+
+The applet reads an optional TOML file from
+
+```
+~/.config/cosmic-ext-applet-codexbar/config.toml
+```
+
+(strictly `$XDG_CONFIG_HOME/cosmic-ext-applet-codexbar/config.toml`). It is
+written out with every field at its default the first time the applet runs, and
+re-read on every refresh — edits apply within about 60 seconds, with no need to
+restart the applet or the panel. If the file is missing or malformed the applet
+falls back to the defaults; a parse error is shown as a caption at the bottom of
+the popup rather than being swallowed.
+
+| field | type | default | effect |
+| --- | --- | --- | --- |
+| `show_session` | bool | `true` | Show the shortest rolling window (`usage.primary`). |
+| `show_weekly` | bool | `true` | Show the second window (`usage.secondary`), normally weekly. |
+| `show_monthly` | bool | `true` | Show the third window (`usage.tertiary`), normally monthly. |
+| `show_reset_countdown` | bool | `true` | Show the "resets in 2h 30m" text beside each visible window. When `false` the percentage and progress bar remain. |
+| `show_credits` | bool | `true` | Show the remaining-credits line for providers that report credits. |
+| `show_account` | bool | `true` | Show the account (usually an email address) beside the provider name. |
+| `background_opacity` | float | `1.0` | Alpha of the popup background, from `0.0` (fully transparent) to `1.0` (the unchanged COSMIC popup background). Out-of-range values are clamped. |
+
+Unknown keys are ignored and omitted keys keep their default, so the defaults
+above are also exactly the behaviour with no config file at all.
+
 ## JSON schema notes
 
 The parser in [`src/codexbar.rs`](src/codexbar.rs) targets the shape documented in

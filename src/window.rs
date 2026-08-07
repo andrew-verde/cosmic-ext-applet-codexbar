@@ -1,22 +1,33 @@
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use chrono::Utc;
 use cosmic::app::Core;
+use cosmic::applet::cosmic_panel_config::PanelAnchor;
 use cosmic::applet::padded_control;
+use cosmic::iced::alignment::{Horizontal, Vertical};
+use cosmic::iced::widget::Container;
 use cosmic::iced::{
-    Length, Limits, Subscription,
+    Border, Color, Length, Limits, Shadow, Subscription,
     platform_specific::shell::wayland::commands::popup::{destroy_popup, get_popup},
     time,
     window::Id,
 };
 use cosmic::widget;
-use cosmic::{Action, Application, Element, Task};
+use cosmic::widget::autosize::{Autosize, autosize};
+use cosmic::{Action, Application, Element, Renderer, Task};
 
 use crate::codexbar::{ProviderPayload, fetch_usage};
+use crate::config::Config;
 
 const ID: &str = "dev.andrewgreen.codexbar";
 const ICON: &str = "dev.andrewgreen.codexbar-symbolic";
 const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Identifies the autosizing popup body to the shell, mirroring the private
+/// `AUTOSIZE_ID` that `cosmic::applet::Context::popup_container` uses.
+static AUTOSIZE_ID: LazyLock<cosmic::iced::id::Id> =
+    LazyLock::new(|| cosmic::iced::id::Id::new("codexbar-applet-autosize"));
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -36,6 +47,9 @@ pub struct Window {
     core: Core,
     popup: Option<Id>,
     state: State,
+    config: Config,
+    /// Why the config file on disk was not honoured, shown in the popup.
+    config_error: Option<String>,
 }
 
 impl Application for Window {
@@ -54,10 +68,13 @@ impl Application for Window {
     }
 
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Action<Message>>) {
+        let (config, config_error) = crate::config::load();
         let window = Window {
             core,
             popup: None,
             state: State::Loading,
+            config,
+            config_error,
         };
         (window, refresh_task())
     }
@@ -76,6 +93,7 @@ impl Application for Window {
                 if let Some(popup) = self.popup.take() {
                     return destroy_popup(popup);
                 }
+                self.reload_config();
                 let new_id = Id::unique();
                 self.popup.replace(new_id);
                 let mut popup_settings = self.core.applet.get_popup_settings(
@@ -93,7 +111,10 @@ impl Application for Window {
                     self.popup = None;
                 }
             }
-            Message::Refresh => return refresh_task(),
+            Message::Refresh => {
+                self.reload_config();
+                return refresh_task();
+            }
             Message::UsageFetched(Ok(payloads)) => self.state = State::Loaded(payloads),
             Message::UsageFetched(Err(error)) => self.state = State::Failed(error),
         }
@@ -124,17 +145,74 @@ impl Application for Window {
             State::Loaded(payloads) => {
                 let mut column = widget::Column::new().spacing(12);
                 for payload in payloads {
-                    column = column.push(provider_view(payload));
+                    column = column.push(provider_view(payload, &self.config));
                 }
                 column
             }
         };
 
-        self.core
-            .applet
-            .popup_container(padded_control(content.width(Length::Fill)))
+        let content = match &self.config_error {
+            Some(error) => widget::Column::new()
+                .spacing(8)
+                .push(content)
+                .push(widget::text::caption(error.clone())),
+            None => content,
+        };
+
+        self.popup_container(padded_control(content.width(Length::Fill)))
             .limits(popup_limits())
             .into()
+    }
+}
+
+impl Window {
+    fn reload_config(&mut self) {
+        let (config, config_error) = crate::config::load();
+        self.config = config;
+        self.config_error = config_error;
+    }
+
+    /// `cosmic::applet::Context::popup_container`, reproduced here so the
+    /// background alpha can be scaled by `background_opacity`. At the default
+    /// opacity of `1.0` this renders exactly what the upstream helper does.
+    fn popup_container<'a>(
+        &self,
+        content: impl Into<Element<'a, Message>>,
+    ) -> Autosize<'a, Message, cosmic::Theme, Renderer> {
+        let (vertical_align, horizontal_align) = match self.core.applet.anchor {
+            PanelAnchor::Left => (Vertical::Center, Horizontal::Left),
+            PanelAnchor::Right => (Vertical::Center, Horizontal::Right),
+            PanelAnchor::Top => (Vertical::Top, Horizontal::Center),
+            PanelAnchor::Bottom => (Vertical::Bottom, Horizontal::Center),
+        };
+        let opacity = self.config.background_opacity;
+
+        autosize(
+            Container::<Message, _, Renderer>::new(
+                Container::<Message, _, Renderer>::new(content).style(move |theme| {
+                    let cosmic = theme.cosmic();
+                    let background = cosmic.background(theme.transparent);
+                    let mut bg = Color::from(background.base);
+                    bg.a *= opacity;
+                    cosmic::iced::widget::container::Style {
+                        text_color: Some(background.on.into()),
+                        background: Some(bg.into()),
+                        border: Border {
+                            radius: cosmic.corner_radii.radius_m.into(),
+                            width: 1.0,
+                            color: background.divider.into(),
+                        },
+                        shadow: Shadow::default(),
+                        icon_color: Some(background.on.into()),
+                        snap: true,
+                    }
+                }),
+            )
+            .height(Length::Shrink)
+            .align_x(horizontal_align)
+            .align_y(vertical_align),
+            AUTOSIZE_ID.clone(),
+        )
     }
 }
 
@@ -151,8 +229,10 @@ fn refresh_task() -> Task<Action<Message>> {
     })
 }
 
-fn provider_view(payload: &ProviderPayload) -> Element<'_, Message> {
-    let mut column = widget::Column::new().spacing(6).push(header(payload));
+fn provider_view<'a>(payload: &'a ProviderPayload, config: &Config) -> Element<'a, Message> {
+    let mut column = widget::Column::new()
+        .spacing(6)
+        .push(header(payload, config));
 
     if let Some(error) = &payload.error {
         column = column.push(widget::text::body(error.message.clone()));
@@ -166,21 +246,29 @@ fn provider_view(payload: &ProviderPayload) -> Element<'_, Message> {
 
     let now = Utc::now();
     let windows = [
-        (usage.primary.as_ref(), "Primary"),
-        (usage.secondary.as_ref(), "Secondary"),
-        (usage.tertiary.as_ref(), "Tertiary"),
+        (usage.primary.as_ref(), "Primary", config.show_session),
+        (usage.secondary.as_ref(), "Secondary", config.show_weekly),
+        (usage.tertiary.as_ref(), "Tertiary", config.show_monthly),
     ];
 
+    // `any` tracks whether the *data* is present, not whether it is displayed,
+    // so hiding every window with the config still leaves the provider silent
+    // rather than claiming nothing was reported.
     let mut any = false;
-    for (window, fallback) in windows {
+    for (window, fallback, show) in windows {
         let Some(window) = window else { continue };
         any = true;
+        if !show {
+            continue;
+        }
         let used = window.used_percent.unwrap_or(0.0);
         let mut row = widget::Row::new()
             .spacing(8)
             .push(widget::text::body(window.window_label(fallback)).width(Length::Fixed(80.0)))
             .push(widget::text::body(format!("{used:.0}%")));
-        if let Some(reset) = window.reset_text(now) {
+        if config.show_reset_countdown
+            && let Some(reset) = window.reset_text(now)
+        {
             row = row.push(widget::text::caption(reset));
         }
         column = column
@@ -192,18 +280,22 @@ fn provider_view(payload: &ProviderPayload) -> Element<'_, Message> {
         column = column.push(widget::text::body("No limit windows reported."));
     }
 
-    if let Some(remaining) = payload.credits.as_ref().and_then(|c| c.remaining) {
+    if config.show_credits
+        && let Some(remaining) = payload.credits.as_ref().and_then(|c| c.remaining)
+    {
         column = column.push(widget::text::caption(format!("Credits: {remaining:.2}")));
     }
 
     column.into()
 }
 
-fn header(payload: &ProviderPayload) -> Element<'_, Message> {
+fn header<'a>(payload: &'a ProviderPayload, config: &Config) -> Element<'a, Message> {
     let mut row = widget::Row::new()
         .spacing(8)
         .push(widget::text::title4(payload.label()));
-    if let Some(account) = &payload.account {
+    if config.show_account
+        && let Some(account) = &payload.account
+    {
         row = row.push(widget::text::caption(account.clone()));
     }
     row.into()

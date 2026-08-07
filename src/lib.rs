@@ -1,7 +1,9 @@
 mod codexbar;
+mod config;
 mod window;
 
 pub use codexbar::{ProviderPayload, parse_usage_json};
+pub use config::Config;
 
 use window::Window;
 
