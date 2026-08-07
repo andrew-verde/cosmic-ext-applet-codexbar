@@ -183,23 +183,29 @@ pub fn parse_usage_json(stdout: &str) -> Result<Vec<ProviderPayload>, String> {
 /// payload carrying the `error` field, so a parseable stdout always wins over
 /// the exit status.
 pub async fn fetch_usage() -> Result<Vec<ProviderPayload>, String> {
-    let output = match run_cli("codexbar").await {
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            let fallback = dirs_local_bin();
-            match run_cli(&fallback).await {
-                Ok(output) => output,
-                Err(e) if e.kind() == ErrorKind::NotFound => {
-                    return Err(
-                        "codexbar CLI not found on PATH or in ~/.local/bin.\n\
-                         Install it from github.com/steipete/CodexBar."
-                            .to_string(),
-                    );
-                }
-                Err(e) => return Err(format!("could not run codexbar: {e}")),
+    // cosmic-panel applets are launched by the systemd graphical session, which
+    // does not source ~/.bashrc or ~/.profile, so managers that only extend PATH
+    // there (Homebrew's `shellenv`, `~/.local/bin` added by some installers)
+    // are invisible here even though `codexbar` works fine in a terminal.
+    let mut candidates = vec!["codexbar".to_string(), dirs_local_bin()];
+    candidates.extend(linuxbrew_candidates());
+
+    let mut output = None;
+    for candidate in &candidates {
+        match run_cli(candidate).await {
+            Ok(o) => {
+                output = Some(o);
+                break;
             }
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("could not run codexbar: {e}")),
         }
-        Err(e) => return Err(format!("could not run codexbar: {e}")),
-        Ok(output) => output,
+    }
+    let Some(output) = output else {
+        return Err(format!(
+            "codexbar CLI not found on PATH, in ~/.local/bin, or in Homebrew's bin dir.\n\
+             Install it from github.com/steipete/CodexBar."
+        ));
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -230,6 +236,19 @@ fn dirs_local_bin() -> String {
         Ok(home) => format!("{home}/.local/bin/codexbar"),
         Err(_) => "codexbar".to_string(),
     }
+}
+
+/// Homebrew on Linux installs to `/home/linuxbrew/.linuxbrew` (the default,
+/// shared prefix) or `~/.linuxbrew` (a per-user prefix used when the shared
+/// one isn't writable). Its `bin/codexbar` is only a wrapper script that execs
+/// the real binary under `Cellar/codexbar/<version>/`, so following the
+/// `bin/codexbar` symlink is enough - no need to glob the Cellar directly.
+fn linuxbrew_candidates() -> Vec<String> {
+    let mut candidates = vec!["/home/linuxbrew/.linuxbrew/bin/codexbar".to_string()];
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(format!("{home}/.linuxbrew/bin/codexbar"));
+    }
+    candidates
 }
 
 #[cfg(test)]
@@ -303,6 +322,16 @@ mod tests {
     /// No providers configured/enabled: the CLI still emits a valid array.
     const EMPTY: &str = "[]";
 
+    /// Real `codexbar usage --format json` output from CodexBar 0.47.0
+    /// (installed via Homebrew, `codexbar --version` reports `CodexBar 0.47.0`),
+    /// with account emails redacted. Confirms the parser handles the live
+    /// schema, which differs from `docs/cli.md` in a few ways not covered by
+    /// `MULTI_PROVIDER` above: extra top-level `pace` objects, a `credits`
+    /// object with an additional `events` array, `usage.primary: null`
+    /// alongside a populated `secondary`, and an `antigravity` provider whose
+    /// windows carry no `windowMinutes` at all.
+    const REAL_WORLD: &str = r#"[{"pace": {"secondary": {"expectedUsedPercent": 50, "deltaPercent": 25, "etaSeconds": 100804, "stage": "farAhead", "willLastToReset": false, "summary": "25% in deficit | Expected 50% used | Runs out in 1d 4h"}}, "source": "oauth", "provider": "codex", "version": "0.146.1", "credits": {"events": [], "updatedAt": "2026-08-07T02:40:08Z", "remaining": 0}, "usage": {"identity": {"loginMethod": "plus", "accountEmail": "redacted@example.com", "providerID": "codex"}, "updatedAt": "2026-08-07T02:40:08Z", "primary": null, "codexResetCredits": {"credits": [], "updatedAt": "2026-08-07T02:40:08Z", "availableCount": 0}, "secondary": {"resetDescription": "Aug 10 at 11:39 PM", "usedPercent": 75, "windowMinutes": 10080, "resetsAt": "2026-08-10T14:39:58Z"}, "tertiary": null, "dataConfidence": "exact", "loginMethod": "plus", "accountEmail": "redacted@example.com"}}, {"pace": {"secondary": {"willLastToReset": true, "deltaPercent": -31, "expectedUsedPercent": 49, "stage": "farBehind", "summary": "31% in reserve | Expected 49% used | Lasts until reset"}, "primary": {"willLastToReset": false, "deltaPercent": 1, "expectedUsedPercent": 17, "stage": "onTrack", "etaSeconds": 13787, "summary": "On pace | Expected 17% used | Projected empty in 3h 50m"}}, "source": "claude", "provider": "claude", "usage": {"identity": {"providerID": "claude"}, "tertiary": null, "secondary": {"usedPercent": 18, "windowMinutes": 10080, "resetsAt": "2026-08-10T16:00:00Z", "resetDescription": "Resets Aug 11, 1am (Asia/Tokyo)"}, "updatedAt": "2026-08-07T02:40:26Z", "primary": {"usedPercent": 18, "windowMinutes": 300, "resetsAt": "2026-08-07T06:50:00Z", "resetDescription": "Resets 3:50pm (Asia/Tokyo)"}}}, {"source": "cli", "provider": "antigravity", "usage": {"identity": {"accountEmail": "redacted2@example.com", "providerID": "antigravity", "loginMethod": "Antigravity Starter Quota"}, "updatedAt": "2026-08-07T02:40:29Z", "primary": {"usedPercent": 0, "resetsAt": "2026-08-14T02:40:28Z"}, "tertiary": null, "secondary": {"usedPercent": 0, "resetsAt": "2026-08-14T02:40:28Z"}, "loginMethod": "Antigravity Starter Quota", "accountEmail": "redacted2@example.com"}}]"#;
+
     /// A provider that failed: `usage` is null, `error` carries the reason.
     const ERRORED: &str = r#"[
       {
@@ -355,6 +384,42 @@ mod tests {
             claude_primary.reset_text(Utc::now()).as_deref(),
             Some("resets today at 3:00 PM")
         );
+    }
+
+    #[test]
+    fn parses_real_world_payload() {
+        let payloads = parse_usage_json(REAL_WORLD).unwrap();
+        assert_eq!(payloads.len(), 3);
+
+        let codex = &payloads[0];
+        assert_eq!(codex.label(), "Codex");
+        assert_eq!(codex.credits.as_ref().unwrap().remaining, Some(0.0));
+        let usage = codex.usage.as_ref().unwrap();
+        assert!(usage.primary.is_none());
+        let secondary = usage.secondary.as_ref().unwrap();
+        assert_eq!(secondary.used_percent, Some(75.0));
+        assert_eq!(secondary.window_label("Secondary"), "Weekly");
+        assert_eq!(
+            secondary.reset_text(Utc::now()).as_deref(),
+            Some("resets Aug 10 at 11:39 PM")
+        );
+
+        let claude = &payloads[1];
+        assert_eq!(claude.label(), "Claude");
+        let claude_usage = claude.usage.as_ref().unwrap();
+        assert_eq!(
+            claude_usage.primary.as_ref().unwrap().window_label("P"),
+            "Session"
+        );
+
+        // antigravity's windows carry no `windowMinutes` at all, only usedPercent/resetsAt.
+        let antigravity = &payloads[2];
+        assert_eq!(antigravity.label(), "Antigravity");
+        let ag_usage = antigravity.usage.as_ref().unwrap();
+        let ag_primary = ag_usage.primary.as_ref().unwrap();
+        assert_eq!(ag_primary.used_percent, Some(0.0));
+        assert!(ag_primary.window_minutes.is_none());
+        assert_eq!(ag_primary.window_label("Primary"), "Primary");
     }
 
     #[test]
