@@ -40,7 +40,8 @@ block. A failing `cost` call never blanks the usage display.
 
 - The COSMIC desktop (this is a `cosmic-panel` applet; it does not run under
   GNOME, KDE, or Cinnamon).
-- A Rust toolchain and [`just`](https://github.com/casey/just).
+- A Rust toolchain and [`just`](https://github.com/casey/just), installed via
+  your distribution's package manager (or `cargo install just`).
 - The `codexbar` CLI, installed separately from
   [steipete/CodexBar](https://github.com/steipete/CodexBar) (Homebrew, the AUR, or
   a release tarball). The applet looks for `codexbar` on `PATH` first, then
@@ -54,8 +55,6 @@ block. A failing `cost` call never blanks the usage display.
   codexbar config enable --provider codex
   codexbar config enable --provider claude
   ```
-
-On Fedora, `just` is available via `sudo dnf install just`.
 
 ## Build and install
 
