@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "COSMIC panel applet showing Codex / Claude Code usage limits"
 license = "MIT"
+repository = "https://github.com/andrew-verde/codexbar-cosmic-applet"
+readme = "README.md"
 
 [profile.release]
 opt-level = 3

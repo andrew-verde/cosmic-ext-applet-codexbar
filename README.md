@@ -43,8 +43,11 @@ block. A failing `cost` call never blanks the usage display.
 - A Rust toolchain and [`just`](https://github.com/casey/just).
 - The `codexbar` CLI, installed separately from
   [steipete/CodexBar](https://github.com/steipete/CodexBar) (Homebrew, the AUR, or
-  a release tarball). The applet looks for `codexbar` on `PATH` first and then
-  falls back to `~/.local/bin/codexbar`.
+  a release tarball). The applet looks for `codexbar` on `PATH` first, then
+  falls back to `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin` and
+  `~/.linuxbrew/bin` — panel applets are started by the graphical session,
+  which does not source your shell profile, so a `PATH` set up there is not
+  visible to the applet.
 - At least one provider enabled in CodexBar, e.g.:
 
   ```sh
@@ -57,7 +60,7 @@ On Fedora, `just` is available via `sudo dnf install just`.
 ## Build and install
 
 ```sh
-git clone <this repository>
+git clone https://github.com/andrew-verde/codexbar-cosmic-applet.git
 cd codexbar-cosmic-applet
 just build-release
 sudo just install
@@ -94,25 +97,25 @@ The applet reads an optional TOML file from
 ~/.config/codexbar-cosmic-applet/config.toml
 ```
 
-(strictly `$XDG_CONFIG_HOME/codexbar-cosmic-applet/config.toml`). It is
-written out with every field at its default the first time the applet runs, and
-re-read on every refresh — edits apply within about 60 seconds, with no need to
-restart the applet or the panel. If the file is missing or malformed the applet
-falls back to the defaults; a parse error is shown as a caption at the bottom of
-the popup rather than being swallowed.
+(strictly `$XDG_CONFIG_HOME/codexbar-cosmic-applet/config.toml`). A commented
+copy is written out the first time the applet runs, and re-read on every
+refresh — edits apply within about 60 seconds, with no need to restart the
+applet or the panel. If the file is missing or malformed the applet falls back
+to the defaults; a parse error is shown as a caption at the bottom of the popup
+rather than being swallowed.
 
 | field | type | default | effect |
 | --- | --- | --- | --- |
 | `show_session` | bool | `true` | Show the shortest rolling window (`usage.primary`). |
 | `show_weekly` | bool | `true` | Show the second window (`usage.secondary`), normally weekly. |
 | `show_monthly` | bool | `true` | Show the third window (`usage.tertiary`), normally monthly. |
-| `show_reset_countdown` | bool | `true` | Show the "Resets in 2h 30m" line under each visible window. When `false` the percentage and progress bar remain. |
-| `show_pace` | bool | `true` | Show CodexBar's pace projection under each visible window, e.g. "On pace", "31% in reserve", "Projected empty in 3h 50m". Providers that report no projection are unaffected. |
+| `show_reset_countdown` | bool | `true` | Show the "Resets in 2h 30m" text beside each visible window's title. When `false` the percentage and progress bar remain. |
+| `show_pace` | bool | `true` | Show CodexBar's pace projection under each visible window, e.g. "31% in reserve - Lasts until reset". Providers that report no projection are unaffected. |
 | `show_cost` | bool | `true` | Show the cost / token block ("Today", "30d cost", "Latest tokens", "30d tokens"). Only Codex and Claude report cost data; other providers omit the block. |
 | `show_credits` | bool | `true` | Show the remaining-credits line for providers that report credits. |
 | `show_account` | bool | `true` | Show the account (usually an email address) beside the provider name. |
 | `usage_display` | string | `"used"` | `"used"` reports quota consumed, `"remaining"` reports quota left (percentages and bars are inverted). Each line names the mode, e.g. "20% used". An unrecognised value falls back to `"used"`. |
-| `background_opacity` | float | *unset* | Alpha of the popup background, from `0.0` (fully transparent) to `1.0` (solid). Leave it out to follow the COSMIC theme, which is what makes the popup look like every other panel popup — translucent when "frosted applets" is on so the compositor blurs behind it, opaque when it is off. Setting a value overrides the theme outright; use `1.0` if a translucent popup is hard to read over a busy wallpaper. Out-of-range values are clamped. |
+| `background_opacity` | float | *unset* (commented out in the generated file) | Alpha of the popup background, from `0.0` (fully transparent) to `1.0` (solid). Leave it out to follow the COSMIC theme, which is what makes the popup look like every other panel popup — translucent when "frosted applets" is on so the compositor blurs behind it, opaque when it is off. Setting a value overrides the theme outright; use `1.0` if a translucent popup is hard to read over a busy wallpaper. Out-of-range values are clamped. |
 
 Unknown keys are ignored and omitted keys keep their default, so the defaults
 above are also exactly the behaviour with no config file at all.
@@ -128,25 +131,40 @@ lowerCamelCase keys and ISO 8601 dates.
 Only the fields this applet displays are decoded — `provider`, `account`,
 `version`, `source`, `usage.{primary,secondary,tertiary}.{usedPercent,
 windowMinutes,resetsAt,resetDescription}`, `usage.updatedAt`,
-`pace.{primary,secondary,tertiary}`, `credits.remaining`
-and `error.message`. Everything is optional and unknown keys are ignored, so a
-CodexBar release that adds or renames fields degrades gracefully rather than
-breaking the applet.
+`usage.identity.loginMethod`, `pace.{primary,secondary,tertiary}`,
+`credits.remaining` and `error.message`. From `codexbar cost` it reads
+`provider`, `currencyCode`, `sessionCostUSD`, `sessionTokens`,
+`last30DaysCostUSD` and `last30DaysTokens`. Everything is optional and unknown
+keys are ignored, so a CodexBar release that adds or renames fields degrades
+gracefully rather than breaking the applet.
 
-Two derived pieces of presentation are *not* in the JSON and are computed here:
+Several pieces of presentation are *not* in the JSON and are computed here:
 
 - **Provider labels.** The payload carries only the provider id, so `codex` and
   `claude` are mapped to "Codex" and "Claude" and anything else is capitalised.
 - **Window names.** "Session" / "Weekly" / "Monthly" are derived from
   `windowMinutes` (`<= 300`, `10080`, `43200`); other values are rendered
-  generically, and a missing `windowMinutes` falls back to
-  Primary/Secondary/Tertiary.
+  generically, and a missing `windowMinutes` falls back to the name of the slot
+  the window came from.
+- **Reset text.** A countdown computed from `resetsAt` is preferred over
+  `resetDescription`, which is a localised wall-clock string ("Resets 3:50pm
+  (Asia/Tokyo)") that is both wider than the popup's value column and less
+  useful than the time remaining. The description is only used when there is no
+  `resetsAt`, with its parenthesised timezone dropped.
+- **Token counts.** Abbreviated, e.g. `19523312` becomes `19.5M`.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
-The provider icons under `data/icons/providers/` are vendored from
+The provider icons under `data/icons/providers/` are vendored unmodified from
 [CodexBar](https://github.com/steipete/CodexBar) (MIT, Copyright (c) 2026 Peter
 Steinberger) and embedded into the binary at compile time. See
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for the full license text.
+
+One function in `src/window.rs` derives from
+[libcosmic](https://github.com/pop-os/libcosmic) and is MPL-2.0 rather than MIT;
+it is identified in both the source and `THIRD_PARTY_LICENSES.md`.
+
+The Overview tab's icon is `view-grid-symbolic`, resolved from whatever icon
+theme is active rather than bundled.
