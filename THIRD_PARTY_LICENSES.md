@@ -1,5 +1,22 @@
 # Third-party licenses
 
+## libcosmic (MPL-2.0)
+
+`Window::popup_container_with_opacity` in `src/window.rs` is a derivative of
+`cosmic::applet::Context::popup_container`, from `src/applet/mod.rs` in
+[libcosmic](https://github.com/pop-os/libcosmic). libcosmic is licensed under
+the Mozilla Public License 2.0, not the MIT license that covers the rest of this
+crate, and that function is therefore subject to the MPL.
+
+The applet calls the upstream helper directly in the default case; the
+derivative exists only because upstream bakes its container style in with no
+hook to override, so the `background_opacity` setting cannot reach the alpha any
+other way. Its source is right here in this repository, as the MPL requires.
+
+The full license text is at
+<https://github.com/pop-os/libcosmic/blob/master/LICENSE>, and a copy ships with
+the crate itself.
+
 ## Provider icons
 
 The SVG files under `data/icons/providers/` are vendored from
