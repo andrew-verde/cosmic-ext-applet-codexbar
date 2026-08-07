@@ -41,9 +41,15 @@ const TAB_ICON_SIZE: u16 = 18;
 /// Edge length of a provider icon beside the provider name.
 const HEADER_ICON_SIZE: u16 = 24;
 
-/// Icon for the Overview tab: the 2x2 grid of rounded squares in COSMIC's own
-/// icon theme, resolved by name so it follows whatever theme is active.
-const OVERVIEW_ICON: &str = "view-grid-symbolic";
+/// Icon for the Overview tab: four rounded squares in a 2x2 grid.
+///
+/// Bundled rather than resolved by name. `view-grid-symbolic` used to be looked
+/// up through the active icon theme, but themes disagree about what that name
+/// draws - Papirus renders a 3x3 pattern of dots - so the tab's look was at the
+/// mercy of whatever the user happened to have installed. This is original
+/// artwork, not a copy of any theme's file, so it carries no license of its own
+/// beyond this crate's.
+const OVERVIEW_ICON: &[u8] = include_bytes!("../data/icons/overview-symbolic.svg");
 
 /// Gap between the major blocks of a provider's tab (header, each rate limit
 /// window, cost). The macOS app leans on whitespace to separate these.
@@ -269,7 +275,7 @@ impl Window {
     fn tab_strip<'a>(&self, payloads: &'a [ProviderPayload]) -> Element<'a, Message> {
         let mut row = widget::Row::new().spacing(4).push(self.tab_button(
             "Overview",
-            Some(widget::icon::from_name(OVERVIEW_ICON).handle()),
+            Some(widget::icon::from_svg_bytes(OVERVIEW_ICON).symbolic(true)),
             Tab::Overview,
         ));
         for payload in payloads {
@@ -857,6 +863,13 @@ mod tests {
             narrowest.size().height <= CAPTION_LINE * 2.0 + 1.0,
             "pace line wrapped more than once: {narrowest:?}"
         );
+    }
+
+    /// The Overview tab's glyph is bundled, so it cannot go missing the way a
+    /// theme lookup could.
+    #[test]
+    fn overview_icon_is_a_bundled_svg() {
+        assert!(OVERVIEW_ICON.windows(4).any(|w| w == b"<svg"));
     }
 
     /// The percentage owns its row, so it is never squeezed either.

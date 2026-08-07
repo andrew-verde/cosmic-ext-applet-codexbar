@@ -202,5 +202,5 @@ One function in `src/window.rs` derives from
 [libcosmic](https://github.com/pop-os/libcosmic) and is MPL-2.0 rather than MIT;
 it is identified in both the source and `THIRD_PARTY_LICENSES.md`.
 
-The Overview tab's icon is `view-grid-symbolic`, resolved from whatever icon
-theme is active rather than bundled.
+The Overview tab's icon is original artwork bundled with the applet, so it looks
+the same under every icon theme.
