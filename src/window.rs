@@ -440,6 +440,14 @@ impl Window {
             column = column.push(widget::text::body("No limit windows reported.").width(Length::Fill));
         }
 
+        // Provider-level, not per-window: a reset credit resets the weekly
+        // window, but the grant sits beside the windows rather than inside one.
+        if self.config.show_reset_credits
+            && let Some(text) = usage.reset_credits_text(now)
+        {
+            column = column.push(widget::text::caption(text).width(Length::Fill));
+        }
+
         if self.config.show_cost
             && let Some(cost) = self.cost_for(&payload.provider)
         {

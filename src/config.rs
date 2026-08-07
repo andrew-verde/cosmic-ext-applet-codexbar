@@ -54,6 +54,11 @@ show_pace = true
 # omit the block.
 show_cost = true
 
+# Show the "Limit reset credits: N available" line. These are the periodic
+# grants that let a Codex account reset its weekly window early; the line is
+# hidden whenever there is nothing redeemable, which is most of the time.
+show_reset_credits = true
+
 # Show the remaining-credits line for providers that report credits.
 show_credits = true
 
@@ -90,6 +95,8 @@ pub struct Config {
     pub show_pace: bool,
     /// Show the cost / token block for providers that report cost data.
     pub show_cost: bool,
+    /// Show the redeemable limit-reset-credit count.
+    pub show_reset_credits: bool,
     /// Show the remaining-credits caption.
     pub show_credits: bool,
     /// Show the account caption in the provider header.
@@ -161,6 +168,7 @@ impl Default for Config {
             show_reset_countdown: true,
             show_pace: true,
             show_cost: true,
+            show_reset_credits: true,
             show_credits: true,
             show_account: true,
             usage_display: UsageDisplay::Used,
@@ -240,6 +248,7 @@ mod tests {
         show_reset_countdown = false
         show_pace = false
         show_cost = false
+        show_reset_credits = false
         show_credits = false
         show_account = false
         usage_display = "remaining"
@@ -261,6 +270,7 @@ mod tests {
         assert!(config.show_reset_countdown);
         assert!(config.show_pace);
         assert!(config.show_cost);
+        assert!(config.show_reset_credits);
         assert!(config.show_credits);
         assert!(config.show_account);
         assert_eq!(config.usage_display, UsageDisplay::Used);
@@ -281,6 +291,7 @@ mod tests {
         assert!(!config.show_reset_countdown);
         assert!(!config.show_pace);
         assert!(!config.show_cost);
+        assert!(!config.show_reset_credits);
         assert!(!config.show_credits);
         assert!(!config.show_account);
         assert_eq!(config.usage_display, UsageDisplay::Remaining);

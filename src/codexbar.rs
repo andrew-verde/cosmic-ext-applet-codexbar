@@ -85,6 +85,8 @@ pub struct UsageSnapshot {
     pub updated_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub identity: Option<Identity>,
+    #[serde(default)]
+    pub codex_reset_credits: Option<CodexResetCredits>,
 }
 
 /// Who the numbers belong to. Only `loginMethod` is decoded; the account email
@@ -95,6 +97,41 @@ pub struct Identity {
     /// Plan or login type, e.g. `plus`, `Antigravity Starter Quota`.
     #[serde(default)]
     pub login_method: Option<String>,
+}
+
+/// `usage.codexResetCredits`: OpenAI's "Limit Reset Credits", the periodic
+/// grants that let a Codex user reset their weekly window early.
+///
+/// Undocumented in CodexBar's `docs/cli.md` and its CLI help, so this mirrors
+/// `CodexRateLimitResetCredit` in CodexBar's Swift source and the live payload.
+/// Only Codex populates it in practice, but nothing here assumes that - a
+/// provider that never reports the field simply has none.
+///
+/// `availableCount` is deliberately not decoded: [`UsageSnapshot`] counts the
+/// entries itself, the same way the macOS app does, rather than trusting a
+/// total that could disagree with the array beside it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexResetCredits {
+    #[serde(default)]
+    pub credits: Vec<ResetCredit>,
+}
+
+/// One reset credit. Redeeming a credit resets the whole window, so each entry
+/// is a discrete grant rather than a point balance.
+///
+/// Unlike the rest of this payload, these keys are snake_case (`expires_at`,
+/// not `expiresAt`), so the field names map straight across and this is the one
+/// struct in the file without a `rename_all` attribute.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResetCredit {
+    /// `available`, `redeeming`, `redeemed` or `expired`. Any other value is
+    /// treated as not redeemable.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Absent for a credit that never expires.
+    #[serde(default)]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -292,12 +329,64 @@ impl UsageSnapshot {
         })
     }
 
+    /// How many reset credits can actually be redeemed right now.
+    pub fn available_reset_credits(&self, now: DateTime<Utc>) -> usize {
+        match &self.codex_reset_credits {
+            Some(reset) => reset
+                .credits
+                .iter()
+                .filter(|credit| credit.is_available(now))
+                .count(),
+            None => 0,
+        }
+    }
+
+    /// Reset-credit caption, e.g. "Limit reset credits: 2 available, soonest
+    /// expires in 3d". `None` when there is nothing redeemable, which is the
+    /// usual case even for Codex.
+    pub fn reset_credits_text(&self, now: DateTime<Utc>) -> Option<String> {
+        let available = self.available_reset_credits(now);
+        if available == 0 {
+            return None;
+        }
+        let mut text = format!("Limit reset credits: {available} available");
+        if let Some(expiry) = self.soonest_reset_credit_expiry(now) {
+            let seconds = expiry.signed_duration_since(now).num_seconds().max(0) as u64;
+            text.push_str(&format!(", soonest expires in {}", duration_text(seconds)));
+        }
+        Some(text)
+    }
+
+    /// When the first redeemable credit lapses. `None` when none of them expire.
+    fn soonest_reset_credit_expiry(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        self.codex_reset_credits
+            .as_ref()?
+            .credits
+            .iter()
+            .filter(|credit| credit.is_available(now))
+            .filter_map(|credit| credit.expires_at)
+            .min()
+    }
+
     /// Plan label from `identity.loginMethod`, capitalised, e.g. "Plus".
     pub fn plan_label(&self) -> Option<String> {
         let method = self.identity.as_ref()?.login_method.as_deref()?.trim();
         let mut chars = method.chars();
         let first = chars.next()?;
         Some(first.to_uppercase().collect::<String>() + chars.as_str())
+    }
+}
+
+impl ResetCredit {
+    /// Whether this credit can be redeemed now.
+    ///
+    /// Mirrors the macOS app: a credit counts only when its status is
+    /// `available` *and* it has not lapsed. The payload's own `availableCount`
+    /// is not consulted, so a stale or differently-counted total cannot put a
+    /// number in the popup that the credits beside it do not support.
+    fn is_available(&self, now: DateTime<Utc>) -> bool {
+        self.status.as_deref() == Some("available")
+            && self.expires_at.is_none_or(|expires| expires > now)
     }
 }
 
@@ -875,6 +964,149 @@ mod tests {
         let text = window.reset_text(Utc::now()).unwrap();
         assert_eq!(text, "Resets Aug 10 at 11:39 PM");
         assert!(text.chars().all(|c| !c.is_whitespace() || c == ' '));
+    }
+
+    /// `usage.codexResetCredits` exactly as the live CLI emits it when the
+    /// account holds no reset credits.
+    const RESET_CREDITS_EMPTY: &str = r#"[
+      {
+        "provider": "codex",
+        "usage": {
+          "codexResetCredits": {
+            "credits": [],
+            "availableCount": 0,
+            "updatedAt": "2026-08-07T11:51:21Z"
+          }
+        }
+      }
+    ]"#;
+
+    /// A populated grant list. `availableCount` deliberately disagrees with the
+    /// array so the test proves the filter, not the number: of the four
+    /// credits only the first is redeemable - the others are expired by status,
+    /// already redeemed, and expired by date despite still saying "available".
+    const RESET_CREDITS_POPULATED: &str = r#"[
+      {
+        "provider": "codex",
+        "usage": {
+          "codexResetCredits": {
+            "availableCount": 4,
+            "credits": [
+              {
+                "id": "a",
+                "reset_type": "weekly",
+                "status": "available",
+                "granted_at": "2026-08-01T00:00:00Z",
+                "expires_at": "2026-08-10T00:00:00Z",
+                "title": "Limit reset",
+                "description": null
+              },
+              {
+                "id": "b",
+                "reset_type": "weekly",
+                "status": "expired",
+                "granted_at": "2026-07-01T00:00:00Z",
+                "expires_at": "2026-07-15T00:00:00Z"
+              },
+              {
+                "id": "c",
+                "reset_type": "weekly",
+                "status": "redeemed",
+                "granted_at": "2026-07-20T00:00:00Z",
+                "expires_at": null,
+                "redeemed_at": "2026-07-21T00:00:00Z"
+              },
+              {
+                "id": "d",
+                "reset_type": "weekly",
+                "status": "available",
+                "granted_at": "2026-07-01T00:00:00Z",
+                "expires_at": "2026-07-02T00:00:00Z"
+              }
+            ]
+          }
+        }
+      }
+    ]"#;
+
+    /// Two redeemable credits, one of which never expires.
+    const RESET_CREDITS_NO_EXPIRY: &str = r#"[
+      {
+        "provider": "codex",
+        "usage": {
+          "codexResetCredits": {
+            "credits": [
+              { "id": "a", "status": "available", "expires_at": null },
+              { "id": "b", "status": "available", "expires_at": null }
+            ]
+          }
+        }
+      }
+    ]"#;
+
+    fn usage_of(payload: &str) -> UsageSnapshot {
+        parse_usage_json(payload).unwrap()[0]
+            .usage
+            .clone()
+            .unwrap()
+    }
+
+    #[test]
+    fn empty_reset_credits_show_nothing() {
+        let usage = usage_of(RESET_CREDITS_EMPTY);
+        assert!(usage.codex_reset_credits.is_some());
+        assert_eq!(usage.available_reset_credits(Utc::now()), 0);
+        assert_eq!(usage.reset_credits_text(Utc::now()), None);
+    }
+
+    #[test]
+    fn counts_only_redeemable_reset_credits() {
+        let now: DateTime<Utc> = "2026-08-07T00:00:00Z".parse().unwrap();
+        let usage = usage_of(RESET_CREDITS_POPULATED);
+
+        // Four entries and an availableCount of 4, but only one is redeemable.
+        assert_eq!(usage.codex_reset_credits.as_ref().unwrap().credits.len(), 4);
+        assert_eq!(usage.available_reset_credits(now), 1);
+        assert_eq!(
+            usage.reset_credits_text(now).as_deref(),
+            Some("Limit reset credits: 1 available, soonest expires in 3d 0h")
+        );
+
+        // Past the last expiry, nothing is redeemable.
+        let later: DateTime<Utc> = "2026-08-11T00:00:00Z".parse().unwrap();
+        assert_eq!(usage.available_reset_credits(later), 0);
+        assert_eq!(usage.reset_credits_text(later), None);
+    }
+
+    #[test]
+    fn reset_credits_without_expiry_omit_the_expiry_clause() {
+        let usage = usage_of(RESET_CREDITS_NO_EXPIRY);
+        let now = Utc::now();
+        assert_eq!(usage.available_reset_credits(now), 2);
+        assert_eq!(
+            usage.reset_credits_text(now).as_deref(),
+            Some("Limit reset credits: 2 available")
+        );
+    }
+
+    #[test]
+    fn providers_without_reset_credits_report_none() {
+        // The real-world payload has an empty `credits` array for Codex and no
+        // `codexResetCredits` at all for Claude or antigravity.
+        let payloads = parse_usage_json(REAL_WORLD).unwrap();
+        for payload in &payloads {
+            let usage = payload.usage.as_ref().unwrap();
+            assert_eq!(usage.available_reset_credits(Utc::now()), 0);
+            assert_eq!(usage.reset_credits_text(Utc::now()), None);
+        }
+        assert!(
+            payloads[1]
+                .usage
+                .as_ref()
+                .unwrap()
+                .codex_reset_credits
+                .is_none()
+        );
     }
 
     #[test]

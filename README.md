@@ -23,6 +23,7 @@ shows:
 - when each limit window resets,
 - CodexBar's pace projection ("On pace", "Projected empty in 3h 50m"),
 - today's and the last 30 days' cost and token counts,
+- redeemable limit-reset credits, when Codex has granted any,
 - remaining credits, when the provider reports them.
 
 The popup body scrolls, so extra providers or windows never push content out of
@@ -119,6 +120,7 @@ rather than being swallowed.
 | `show_reset_countdown` | bool | `true` | Show the "Resets in 2h 30m" text beside each visible window's title. When `false` the percentage and progress bar remain. |
 | `show_pace` | bool | `true` | Show CodexBar's pace projection under each visible window, e.g. "31% in reserve - Lasts until reset". Providers that report no projection are unaffected. |
 | `show_cost` | bool | `true` | Show the cost / token block ("Today", "30d cost", "Latest tokens", "30d tokens"). Only Codex and Claude report cost data; other providers omit the block. |
+| `show_reset_credits` | bool | `true` | Show the "Limit reset credits: N available" line — the periodic grants that let a Codex account reset its weekly window early. Hidden whenever nothing is redeemable, which is most of the time. |
 | `show_credits` | bool | `true` | Show the remaining-credits line for providers that report credits. |
 | `show_account` | bool | `true` | Show the account (usually an email address) beside the provider name. |
 | `usage_display` | string | `"used"` | `"used"` reports quota consumed, `"remaining"` reports quota left (percentages and bars are inverted). Each line names the mode, e.g. "20% used". An unrecognised value falls back to `"used"`. |
@@ -167,8 +169,9 @@ lowerCamelCase keys and ISO 8601 dates.
 Only the fields this applet displays are decoded — `provider`, `account`,
 `version`, `source`, `usage.{primary,secondary,tertiary}.{usedPercent,
 windowMinutes,resetsAt,resetDescription}`, `usage.updatedAt`,
-`usage.identity.loginMethod`, `pace.{primary,secondary,tertiary}`,
-`credits.remaining` and `error.message`. From `codexbar cost` it reads
+`usage.identity.loginMethod`, `usage.codexResetCredits.credits[].{status,
+expires_at}`, `pace.{primary,secondary,tertiary}`, `credits.remaining` and
+`error.message`. From `codexbar cost` it reads
 `provider`, `currencyCode`, `sessionCostUSD`, `sessionTokens`,
 `last30DaysCostUSD` and `last30DaysTokens`. Everything is optional and unknown
 keys are ignored, so a CodexBar release that adds or renames fields degrades
@@ -188,6 +191,12 @@ Several pieces of presentation are *not* in the JSON and are computed here:
   useful than the time remaining. The description is only used when there is no
   `resetsAt`, with its parenthesised timezone dropped.
 - **Token counts.** Abbreviated, e.g. `19523312` becomes `19.5M`.
+- **Redeemable reset credits.** `usage.codexResetCredits` is undocumented in
+  CodexBar's `docs/cli.md`; its shape is taken from CodexBar's Swift source and
+  the live payload, and its keys are snake_case where the rest of the payload is
+  camelCase. The count comes from filtering `credits` for `status ==
+  "available"` that have not lapsed, as the macOS app does, rather than from the
+  `availableCount` beside them.
 
 ## License
 
