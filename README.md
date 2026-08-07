@@ -5,8 +5,10 @@ your OpenAI Codex / Claude Code usage limits, in the spirit of the macOS app
 [CodexBar](https://github.com/steipete/CodexBar).
 
 The applet adds a small icon to the COSMIC panel. Clicking it opens a popup with
-a tab per provider plus an **Overview** tab that condenses every provider to one
-line. A provider's own tab shows:
+a tab per provider — each showing that provider's logo over its name — plus an
+**Overview** tab that condenses every provider to one line. The tab strip
+scrolls horizontally, so any number of providers fits. A provider's own tab
+shows:
 
 - the provider label, account, snapshot age and plan,
 - session / weekly / monthly usage as a percentage plus a progress bar,
@@ -110,7 +112,7 @@ the popup rather than being swallowed.
 | `show_credits` | bool | `true` | Show the remaining-credits line for providers that report credits. |
 | `show_account` | bool | `true` | Show the account (usually an email address) beside the provider name. |
 | `usage_display` | string | `"used"` | `"used"` reports quota consumed, `"remaining"` reports quota left (percentages and bars are inverted). Each line names the mode, e.g. "20% used". An unrecognised value falls back to `"used"`. |
-| `background_opacity` | float | `1.0` | Alpha of the popup background, from `0.0` (fully transparent) to `1.0` (the unchanged COSMIC popup background). Out-of-range values are clamped. |
+| `background_opacity` | float | *unset* | Alpha of the popup background, from `0.0` (fully transparent) to `1.0` (solid). Leave it out to follow the COSMIC theme, which is what makes the popup look like every other panel popup — translucent when "frosted applets" is on so the compositor blurs behind it, opaque when it is off. Setting a value overrides the theme outright; use `1.0` if a translucent popup is hard to read over a busy wallpaper. Out-of-range values are clamped. |
 
 Unknown keys are ignored and omitted keys keep their default, so the defaults
 above are also exactly the behaviour with no config file at all.
@@ -143,3 +145,8 @@ Two derived pieces of presentation are *not* in the JSON and are computed here:
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+The provider icons under `data/icons/providers/` are vendored from
+[CodexBar](https://github.com/steipete/CodexBar) (MIT, Copyright (c) 2026 Peter
+Steinberger) and embedded into the binary at compile time. See
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for the full license text.

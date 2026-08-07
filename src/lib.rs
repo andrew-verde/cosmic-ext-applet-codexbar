@@ -1,5 +1,6 @@
 mod codexbar;
 mod config;
+mod icons;
 mod window;
 
 pub use codexbar::{CostPayload, ProviderPayload, parse_cost_json, parse_usage_json};

@@ -8,14 +8,16 @@ use cosmic::applet::padded_control;
 use cosmic::iced::alignment::{Horizontal, Vertical};
 use cosmic::iced::widget::Container;
 use cosmic::iced::{
-    Border, Color, Length, Limits, Shadow, Subscription,
-    platform_specific::shell::wayland::commands::popup::{destroy_popup, get_popup},
+    Border, Color, Length, Limits, Point, Rectangle, Shadow, Size, Subscription,
+    platform_specific::shell::wayland::commands::{
+        blur::blur,
+        popup::{destroy_popup, get_popup},
+    },
     time,
     window::Id,
 };
 use cosmic::widget;
 use cosmic::widget::autosize::{Autosize, autosize};
-use cosmic::widget::segmented_button::{Entity, SingleSelectModel};
 use cosmic::{Action, Application, Element, Renderer, Task};
 
 use crate::codexbar::{
@@ -23,6 +25,7 @@ use crate::codexbar::{
     format_cost, format_tokens,
 };
 use crate::config::Config;
+use crate::icons::provider_icon;
 
 const ID: &str = "io.github.andrew-verde.CodexBarCosmicApplet";
 const ICON: &str = "io.github.andrew-verde.CodexBarCosmicApplet-symbolic";
@@ -31,6 +34,12 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 /// Height the scrolling body is capped at. The tab bar, padding and this must
 /// stay inside [`popup_limits`]'s `max_height`, which bounds the whole popup.
 const MAX_BODY_HEIGHT: f32 = 460.0;
+
+/// Edge length of a provider icon in the tab strip.
+const TAB_ICON_SIZE: u16 = 18;
+
+/// Edge length of a provider icon beside the provider name.
+const HEADER_ICON_SIZE: u16 = 20;
 
 /// Identifies the autosizing popup body to the shell, mirroring the private
 /// `AUTOSIZE_ID` that `cosmic::applet::Context::popup_container` uses.
@@ -44,12 +53,12 @@ pub enum Message {
     Refresh,
     UsageFetched(Result<Vec<ProviderPayload>, String>),
     CostFetched(Result<Vec<CostPayload>, String>),
-    TabSelected(Entity),
+    TabSelected(Tab),
 }
 
 /// Which page of the popup is showing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Tab {
+pub enum Tab {
     /// One condensed line per provider.
     Overview,
     /// The full layout for a single provider, keyed by provider id.
@@ -69,7 +78,7 @@ pub struct Window {
     /// Cost data, keyed by provider id. Empty when the `cost` subcommand is
     /// unavailable or reports nothing, which only hides the cost block.
     costs: Vec<CostPayload>,
-    tabs: SingleSelectModel,
+    tab: Tab,
     config: Config,
     /// Why the config file on disk was not honoured, shown in the popup.
     config_error: Option<String>,
@@ -92,16 +101,15 @@ impl Application for Window {
 
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Action<Message>>) {
         let (config, config_error) = crate::config::load();
-        let mut window = Window {
+        let window = Window {
             core,
             popup: None,
             state: State::Loading,
             costs: Vec::new(),
-            tabs: SingleSelectModel::default(),
+            tab: Tab::Overview,
             config,
             config_error,
         };
-        window.rebuild_tabs(&[]);
         (window, refresh_task())
     }
 
@@ -130,7 +138,11 @@ impl Application for Window {
                     None,
                 );
                 popup_settings.positioner.size_limits = popup_limits();
-                return Task::batch([refresh_task(), get_popup(popup_settings)]);
+                return Task::batch([
+                    refresh_task(),
+                    get_popup(popup_settings),
+                    blur_popup(new_id),
+                ]);
             }
             Message::PopupClosed(id) => {
                 if Some(id) == self.popup {
@@ -142,14 +154,19 @@ impl Application for Window {
                 return refresh_task();
             }
             Message::UsageFetched(Ok(payloads)) => {
-                self.rebuild_tabs(&payloads);
+                // Fall back to Overview when the selected provider disappears.
+                if let Tab::Provider(provider) = &self.tab
+                    && !payloads.iter().any(|p| &p.provider == provider)
+                {
+                    self.tab = Tab::Overview;
+                }
                 self.state = State::Loaded(payloads);
             }
             Message::UsageFetched(Err(error)) => self.state = State::Failed(error),
             // Cost is supplementary: a failure just leaves the block out.
             Message::CostFetched(Ok(costs)) => self.costs = costs,
             Message::CostFetched(Err(_)) => self.costs.clear(),
-            Message::TabSelected(entity) => self.tabs.activate(entity),
+            Message::TabSelected(tab) => self.tab = tab,
         }
         Task::none()
     }
@@ -160,6 +177,13 @@ impl Application for Window {
             .icon_button(ICON)
             .on_press(Message::TogglePopup)
             .into()
+    }
+
+    /// Every COSMIC applet paints its surface transparent and lets
+    /// `popup_container` draw the panel itself; without this the runtime falls
+    /// back to a window style meant for ordinary app windows.
+    fn style(&self) -> Option<cosmic::iced::theme::Style> {
+        Some(cosmic::applet::style())
     }
 
     fn view_window(&self, _id: Id) -> Element<'_, Self::Message> {
@@ -175,8 +199,8 @@ impl Application for Window {
                 .push(widget::text::body(
                     "Enable one with `codexbar config enable --provider <id>`.",
                 )),
-            State::Loaded(payloads) => match self.tabs.active_data::<Tab>() {
-                Some(Tab::Provider(provider)) => {
+            State::Loaded(payloads) => match &self.tab {
+                Tab::Provider(provider) => {
                     match payloads.iter().find(|p| &p.provider == provider) {
                         Some(payload) => widget::Column::new()
                             .push(self.provider_detail(payload))
@@ -185,7 +209,7 @@ impl Application for Window {
                             .push(widget::text::body("This provider is no longer reported.")),
                     }
                 }
-                _ => {
+                Tab::Overview => {
                     let mut column = widget::Column::new().spacing(12);
                     for payload in payloads {
                         column = column.push(self.provider_summary(payload));
@@ -195,15 +219,14 @@ impl Application for Window {
             },
         };
 
-        // The tab bar stays put while only the body scrolls, and the body is
+        // The tab strip stays put while only the body scrolls, and the body is
         // capped so long provider lists scroll instead of growing the popup
         // past `popup_limits`'s max height (where they would be clipped).
         let mut content = widget::Column::new().spacing(8);
-        if self.tabs.len() > 1 {
-            content = content.push(
-                widget::segmented_control::horizontal(&self.tabs)
-                    .on_activate(Message::TabSelected),
-            );
+        if let State::Loaded(payloads) = &self.state
+            && !payloads.is_empty()
+        {
+            content = content.push(self.tab_strip(payloads));
         }
         content = content.push(
             widget::container(widget::scrollable(body.width(Length::Fill)))
@@ -227,20 +250,52 @@ impl Window {
         self.config_error = config_error;
     }
 
-    /// Rebuild the tab bar for the current provider list, keeping the selected
-    /// tab if it still exists and falling back to Overview if it does not.
-    fn rebuild_tabs(&mut self, payloads: &[ProviderPayload]) {
-        let selected = self.tabs.active_data::<Tab>().cloned();
-        let mut tabs = SingleSelectModel::default();
-        tabs.insert().text("Overview").data(Tab::Overview).activate();
+    /// Overview plus one tab per provider, scrolling horizontally so the strip
+    /// can be wider than the popup instead of cramming labels.
+    ///
+    /// `segmented_control` distributes its buttons across the available width,
+    /// which is what truncated the labels at four tabs; a plain row of buttons
+    /// sizes to its content and lets each tab stack its icon over its name.
+    fn tab_strip<'a>(&self, payloads: &'a [ProviderPayload]) -> Element<'a, Message> {
+        let mut row = widget::Row::new()
+            .spacing(4)
+            .push(self.tab_button("Overview", None, Tab::Overview));
         for payload in payloads {
-            let tab = Tab::Provider(payload.provider.clone());
-            let entity = tabs.insert().text(payload.label()).data(tab.clone()).id();
-            if selected.as_ref() == Some(&tab) {
-                tabs.activate(entity);
-            }
+            row = row.push(self.tab_button(
+                payload.label(),
+                provider_icon(&payload.provider),
+                Tab::Provider(payload.provider.clone()),
+            ));
         }
-        self.tabs = tabs;
+        widget::scrollable::horizontal(row).into()
+    }
+
+    /// One tab: the provider's icon over its name, or name-only when no icon is
+    /// vendored for that provider id.
+    fn tab_button<'a>(
+        &self,
+        label: impl Into<String>,
+        icon: Option<&'static [u8]>,
+        tab: Tab,
+    ) -> Element<'a, Message> {
+        let mut column = widget::Column::new()
+            .spacing(2)
+            .align_x(Horizontal::Center);
+        if let Some(icon) = icon {
+            column = column.push(provider_glyph(icon, TAB_ICON_SIZE));
+        }
+        column = column.push(widget::text::caption(label.into()));
+
+        let selected = self.tab == tab;
+        widget::button::custom(column)
+            .class(if selected {
+                cosmic::theme::Button::Suggested
+            } else {
+                cosmic::theme::Button::Text
+            })
+            .padding([4, 8])
+            .on_press(Message::TabSelected(tab))
+            .into()
     }
 
     /// One condensed line per provider for the Overview tab: enough to scan
@@ -288,10 +343,15 @@ impl Window {
     /// The full macOS-style layout for one provider.
     fn provider_detail<'a>(&'a self, payload: &'a ProviderPayload) -> Element<'a, Message> {
         let now = Utc::now();
-        let mut column = widget::Column::new().spacing(4).push(split_row(
-            widget::text::title4(payload.label()),
-            account_caption(payload, &self.config),
-        ));
+        let mut title = widget::Row::new().spacing(6).align_y(Vertical::Center);
+        if let Some(icon) = provider_icon(&payload.provider) {
+            title = title.push(provider_glyph(icon, HEADER_ICON_SIZE));
+        }
+        title = title.push(widget::text::title4(payload.label()));
+
+        let mut column = widget::Column::new()
+            .spacing(4)
+            .push(split_row(title, account_caption(payload, &self.config)));
 
         if let Some(error) = &payload.error {
             return column
@@ -423,12 +483,31 @@ impl Window {
             .find(|cost| cost.provider == provider && cost.has_figures())
     }
 
-    /// `cosmic::applet::Context::popup_container`, reproduced here so the
-    /// background alpha can be scaled by `background_opacity`. At the default
-    /// opacity of `1.0` this renders exactly what the upstream helper does.
+    /// The popup panel.
+    ///
+    /// With no `background_opacity` configured this is upstream's
+    /// `cosmic::applet::Context::popup_container` verbatim, so the popup is
+    /// styled exactly like every other COSMIC applet popup - including the
+    /// theme's translucent background when frosted applets are enabled, which
+    /// the compositor blurs behind. Only an explicit opacity override falls
+    /// through to the local copy below.
     fn popup_container<'a>(
         &self,
         content: impl Into<Element<'a, Message>>,
+    ) -> Autosize<'a, Message, cosmic::Theme, Renderer> {
+        match self.config.background_opacity {
+            Some(opacity) => self.popup_container_with_opacity(content, opacity),
+            None => self.core.applet.popup_container(content),
+        }
+    }
+
+    /// `popup_container` with the background alpha replaced outright. The alpha
+    /// is absolute rather than a multiplier, so `1.0` gives a solid, readable
+    /// panel even when the theme would otherwise render it translucent.
+    fn popup_container_with_opacity<'a>(
+        &self,
+        content: impl Into<Element<'a, Message>>,
+        opacity: f32,
     ) -> Autosize<'a, Message, cosmic::Theme, Renderer> {
         let (vertical_align, horizontal_align) = match self.core.applet.anchor {
             PanelAnchor::Left => (Vertical::Center, Horizontal::Left),
@@ -436,15 +515,13 @@ impl Window {
             PanelAnchor::Top => (Vertical::Top, Horizontal::Center),
             PanelAnchor::Bottom => (Vertical::Bottom, Horizontal::Center),
         };
-        let opacity = self.config.background_opacity;
-
         autosize(
             Container::<Message, _, Renderer>::new(
                 Container::<Message, _, Renderer>::new(content).style(move |theme| {
                     let cosmic = theme.cosmic();
                     let background = cosmic.background(theme.transparent);
                     let mut bg = Color::from(background.base);
-                    bg.a *= opacity;
+                    bg.a = opacity;
                     cosmic::iced::widget::container::Style {
                         text_color: Some(background.on.into()),
                         background: Some(bg.into()),
@@ -474,6 +551,21 @@ fn popup_limits() -> Limits {
         .max_height(600.0)
 }
 
+/// Ask the compositor to blur behind the popup.
+///
+/// libcosmic issues this for surfaces it tracks itself, but not for popups an
+/// applet creates with `get_popup`, so the theme's translucent popup background
+/// ends up with nothing blurred behind it. The request is safe to send blind:
+/// when `ext_background_effect_v1` is missing or does not advertise blur, the
+/// shell queues or drops it rather than erroring.
+fn blur_popup(id: Id) -> Task<Action<Message>> {
+    blur(
+        id,
+        Some(vec![Rectangle::new(Point::ORIGIN, Size::INFINITE)]),
+    )
+    .discard()
+}
+
 fn refresh_task() -> Task<Action<Message>> {
     Task::batch([
         Task::perform(fetch_usage(), |result| {
@@ -494,6 +586,19 @@ fn split_row<'a>(
         .align_y(Vertical::Center)
         .push(widget::container(left).width(Length::Fill))
         .push(right)
+        .into()
+}
+
+/// A vendored provider icon, tinted with the theme's foreground colour. The
+/// SVGs are monochrome templates, so they carry no colour of their own.
+fn provider_glyph<'a>(icon: &'static [u8], size: u16) -> Element<'a, Message> {
+    widget::icon(widget::icon::from_svg_bytes(icon).symbolic(true))
+        .size(size)
+        .class(cosmic::theme::Svg::custom(|theme| {
+            cosmic::iced::widget::svg::Style {
+                color: Some(theme.cosmic().background(theme.transparent).on.into()),
+            }
+        }))
         .into()
 }
 

@@ -65,10 +65,13 @@ show_account = true
 # active. An unrecognised value falls back to "used".
 usage_display = "used"
 
-# Opacity of the popup background, from 0.0 (fully transparent) to 1.0
-# (the default, unchanged COSMIC popup background). Values outside that range
-# are clamped.
-background_opacity = 1.0
+# Opacity of the popup background, from 0.0 (fully transparent) to 1.0 (solid).
+# Leave this commented out to follow the COSMIC theme, which is what makes the
+# popup look like every other panel popup: translucent when "frosted applets"
+# is on so the compositor can blur behind it, opaque when it is off. Setting a
+# value overrides the theme outright - use 1.0 if a translucent popup is hard
+# to read over a busy wallpaper. Values outside 0.0..=1.0 are clamped.
+# background_opacity = 1.0
 "#;
 
 /// User-editable settings. Defaults reproduce the applet's original behaviour.
@@ -94,8 +97,9 @@ pub struct Config {
     /// Report quota consumed or quota left.
     #[serde(deserialize_with = "deserialize_usage_display")]
     pub usage_display: UsageDisplay,
-    /// Alpha multiplier for the popup background, clamped to `0.0..=1.0`.
-    pub background_opacity: f32,
+    /// Absolute alpha for the popup background, clamped to `0.0..=1.0`.
+    /// `None` follows the COSMIC theme, which is the default.
+    pub background_opacity: Option<f32>,
 }
 
 /// Whether a window's percentage and progress bar describe how much quota has
@@ -160,7 +164,7 @@ impl Default for Config {
             show_credits: true,
             show_account: true,
             usage_display: UsageDisplay::Used,
-            background_opacity: 1.0,
+            background_opacity: None,
         }
     }
 }
@@ -172,7 +176,9 @@ impl Default for Config {
 pub fn parse_config(contents: &str) -> Result<Config, String> {
     let mut config: Config =
         toml::from_str(contents).map_err(|e| format!("could not parse config.toml: {e}"))?;
-    config.background_opacity = config.background_opacity.clamp(0.0, 1.0);
+    config.background_opacity = config
+        .background_opacity
+        .map(|opacity| opacity.clamp(0.0, 1.0));
     Ok(config)
 }
 
@@ -258,7 +264,7 @@ mod tests {
         assert!(config.show_credits);
         assert!(config.show_account);
         assert_eq!(config.usage_display, UsageDisplay::Used);
-        assert_eq!(config.background_opacity, 1.0);
+        assert_eq!(config.background_opacity, None);
     }
 
     #[test]
@@ -278,7 +284,7 @@ mod tests {
         assert!(!config.show_credits);
         assert!(!config.show_account);
         assert_eq!(config.usage_display, UsageDisplay::Remaining);
-        assert_eq!(config.background_opacity, 0.75);
+        assert_eq!(config.background_opacity, Some(0.75));
     }
 
     #[test]
@@ -320,7 +326,7 @@ mod tests {
         let config = parse_config(PARTIAL).unwrap();
         assert!(!config.show_credits);
         assert!(config.show_session);
-        assert_eq!(config.background_opacity, 1.0);
+        assert_eq!(config.background_opacity, None);
     }
 
     #[test]
@@ -334,14 +340,16 @@ mod tests {
             parse_config("background_opacity = 4.0")
                 .unwrap()
                 .background_opacity,
-            1.0
+            Some(1.0)
         );
         assert_eq!(
             parse_config("background_opacity = -1.0")
                 .unwrap()
                 .background_opacity,
-            0.0
+            Some(0.0)
         );
+        // Unset means "follow the theme", not "fully opaque".
+        assert_eq!(parse_config("").unwrap().background_opacity, None);
     }
 
     /// A private scratch directory, so these tests never touch the real
@@ -388,7 +396,7 @@ mod tests {
         let (config, error) = load_from(&path);
         assert_eq!(error, None);
         assert!(!config.show_weekly);
-        assert_eq!(config.background_opacity, 0.75);
+        assert_eq!(config.background_opacity, Some(0.75));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
