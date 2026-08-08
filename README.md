@@ -1,19 +1,18 @@
 # codexbar-cosmic-applet
 
 A native [COSMIC](https://github.com/pop-os/cosmic-epoch) panel applet that shows
-your OpenAI Codex / Claude Code usage limits, in the spirit of the macOS app
+your agent usage limits, in the spirit of the macOS app
 [CodexBar](https://github.com/steipete/CodexBar).
 
 ![Screenshot of the applet's popup, showing the Claude tab with session and weekly usage, pace projection, and cost/token stats](docs/screenshot.png)
 
-Every provider CodexBar itself supports works here too — this reads whatever
-`codexbar usage`/`codexbar cost` report, so it's not limited to Codex and
-Claude. It also ships icons for CodexBar's full provider list (OpenAI, Claude,
-Gemini, Copilot, Cursor, Mistral, DeepSeek, Grok, and dozens more), not just
-the two or three most common ones.
+Every provider CodexBar itself supports works here too - this reads whatever
+`codexbar usage`/`codexbar cost` report. It also ships icons for CodexBar's 
+full provider list (OpenAI, Claude,Gemini, Copilot, Cursor, Mistral, DeepSeek, 
+Grok, etc.).
 
 The applet adds a small icon to the COSMIC panel. Clicking it opens a popup with
-a tab per provider — each showing that provider's logo over its name — plus an
+a tab per provider - each showing that provider's logo over its name - plus an
 **Overview** tab that condenses every provider to one line. The tab strip
 scrolls horizontally, so any number of providers fits. A provider's own tab
 shows:
@@ -23,7 +22,7 @@ shows:
 - when each limit window resets,
 - CodexBar's pace projection ("On pace", "Projected empty in 3h 50m"),
 - today's and the last 30 days' cost and token counts,
-- redeemable limit-reset credits, when Codex has granted any,
+- redeemable limit-reset credit,
 - remaining credits, when the provider reports them.
 
 The popup body scrolls, so extra providers or windows never push content out of
@@ -55,7 +54,7 @@ block. A failing `cost` call never blanks the usage display.
   [steipete/CodexBar](https://github.com/steipete/CodexBar) (Homebrew, the AUR, or
   a release tarball). The applet looks for `codexbar` on `PATH` first, then
   falls back to `~/.local/bin`, `/home/linuxbrew/.linuxbrew/bin` and
-  `~/.linuxbrew/bin` — panel applets are started by the graphical session,
+  `~/.linuxbrew/bin` - panel applets are started by the graphical session,
   which does not source your shell profile, so a `PATH` set up there is not
   visible to the applet.
 - At least one provider enabled in CodexBar, e.g.:
@@ -150,14 +149,6 @@ just update-icons
 [`.github/workflows/update-icons.yml`](.github/workflows/update-icons.yml) runs
 the same script every Monday and opens a pull request when anything changed.
 
-**If this repository stops being maintained**, that workflow keeps running and
-keeps opening pull requests — but merging needs someone with write access, so
-the pull requests pile up unmerged rather than the icons quietly going stale
-with nobody the wiser. The applet itself carries on working: new providers still
-appear, just without their logos. (The workflow also needs "Allow GitHub Actions
-to create and approve pull requests" enabled in the repository's Actions
-settings.)
-
 ## JSON schema notes
 
 The parser in [`src/codexbar.rs`](src/codexbar.rs) targets the shape documented in
@@ -200,7 +191,7 @@ Several pieces of presentation are *not* in the JSON and are computed here:
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
 
 The provider icons under `data/icons/providers/` are vendored unmodified from
 [CodexBar](https://github.com/steipete/CodexBar) (MIT, Copyright (c) 2026 Peter
