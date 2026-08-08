@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26262B"/>
+      <stop offset="1" stop-color="#0C0C0E"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="8" y="8" width="496" height="496" rx="124" fill="url(#bg)"/>
+
+  <!-- CodexBar's usage bar, bent into an orbit. The track is a closed circle so
+       the unused remainder reads as track rather than a gap, and the amber is
+       drawn full length underneath the teal so it flows out of it. Rotating by
+       -90 starts the arc at twelve o'clock, running clockwise. -->
+  <g transform="rotate(-90 256 256)">
+    <circle cx="256" cy="256" r="182" fill="none" stroke="#2E2E33" stroke-width="26"/>
+    <circle cx="256" cy="256" r="182" fill="none" stroke="#FAA41A" stroke-width="26"
+            stroke-linecap="round" stroke-dasharray="846 298"/>
+    <circle cx="256" cy="256" r="182" fill="none" stroke="#48B9C7" stroke-width="26"
+            stroke-linecap="round" stroke-dasharray="755 389"/>
+  </g>
+
+  <polyline points="196,146 324,256 196,366" fill="none" stroke="#FAFAFA"
+            stroke-width="58" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

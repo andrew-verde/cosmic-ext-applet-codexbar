@@ -33,7 +33,7 @@
         "install -Dm0644 ./data/io.github.andrew_verde.codexbar-cosmic-applet.desktop /app/share/applications/io.github.andrew_verde.codexbar-cosmic-applet.desktop",
         "install -Dm0644 ./data/io.github.andrew_verde.codexbar-cosmic-applet.metainfo.xml /app/share/metainfo/io.github.andrew_verde.codexbar-cosmic-applet.metainfo.xml",
         "install -Dm0644 ./data/icons/scalable/apps/io.github.andrew_verde.codexbar-cosmic-applet-symbolic.svg /app/share/icons/hicolor/scalable/apps/io.github.andrew_verde.codexbar-cosmic-applet-symbolic.svg",
-        "install -Dm0644 ./data/icons/scalable/apps/io.github.andrew_verde.codexbar-cosmic-applet-symbolic.svg /app/share/icons/hicolor/scalable/apps/io.github.andrew_verde.codexbar-cosmic-applet.svg"
+        "install -Dm0644 ./data/icons/scalable/apps/io.github.andrew_verde.codexbar-cosmic-applet.svg /app/share/icons/hicolor/scalable/apps/io.github.andrew_verde.codexbar-cosmic-applet.svg"
       ],
       "sources": [
         {

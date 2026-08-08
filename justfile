@@ -43,6 +43,7 @@ update-icons:
 
 _install_icon:
     install -Dm0644 'data/icons/scalable/apps/{{appid}}-symbolic.svg' {{iconsdir}}/{{appid}}-symbolic.svg
+    install -Dm0644 'data/icons/scalable/apps/{{appid}}.svg' {{iconsdir}}/{{appid}}.svg
 
 _install_desktop:
     install -Dm0644 'data/{{appid}}.desktop' {{sharedir}}/applications/{{appid}}.desktop
@@ -60,6 +61,7 @@ install: _install_icon _install_desktop _install_metainfo _install_bin
 uninstall:
     rm -f {{bindir}}/{{name}}
     rm -f {{iconsdir}}/{{appid}}-symbolic.svg
+    rm -f {{iconsdir}}/{{appid}}.svg
     rm -f {{sharedir}}/applications/{{appid}}.desktop
     rm -f {{metainfodir}}/{{appid}}.metainfo.xml
 

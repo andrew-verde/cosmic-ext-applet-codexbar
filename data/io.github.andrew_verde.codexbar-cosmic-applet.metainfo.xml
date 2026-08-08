@@ -35,7 +35,7 @@
   </description>
 
   <launchable type="desktop-id">io.github.andrew_verde.codexbar-cosmic-applet.desktop</launchable>
-  <icon type="stock">io.github.andrew_verde.codexbar-cosmic-applet-symbolic</icon>
+  <icon type="stock">io.github.andrew_verde.codexbar-cosmic-applet</icon>
 
   <screenshots>
     <screenshot type="default">

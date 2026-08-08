@@ -80,6 +80,7 @@ sudo just install
 | `codexbar-cosmic-applet` | `/usr/bin/` |
 | `io.github.andrew_verde.codexbar-cosmic-applet.desktop` | `/usr/share/applications/` |
 | `io.github.andrew_verde.codexbar-cosmic-applet-symbolic.svg` | `/usr/share/icons/hicolor/scalable/apps/` |
+| `io.github.andrew_verde.codexbar-cosmic-applet.svg` | `/usr/share/icons/hicolor/scalable/apps/` |
 | `io.github.andrew_verde.codexbar-cosmic-applet.metainfo.xml` | `/usr/share/metainfo/` |
 
 To install somewhere else, override `prefix` or `rootdir`, e.g.
