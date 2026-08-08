@@ -25,6 +25,8 @@ shows:
 - redeemable limit-reset credit,
 - remaining credits, when the provider reports them.
 
+![Screenshot of the Overview tab, listing every provider's windows one line each](docs/screenshot-overview.png)
+
 The popup body scrolls, so extra providers or windows never push content out of
 view. State is refreshed every 60 seconds, and again whenever the popup is
 opened.

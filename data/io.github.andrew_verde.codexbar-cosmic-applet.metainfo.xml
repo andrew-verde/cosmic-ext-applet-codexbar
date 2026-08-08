@@ -42,6 +42,10 @@
       <image>https://raw.githubusercontent.com/andrew-verde/codexbar-cosmic-applet/main/docs/screenshot.png</image>
       <caption>The popup's Claude tab, with session and weekly usage, pace projection and cost stats</caption>
     </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/andrew-verde/codexbar-cosmic-applet/main/docs/screenshot-overview.png</image>
+      <caption>The Overview tab, condensing every provider's windows to one line each</caption>
+    </screenshot>
   </screenshots>
 
   <url type="homepage">https://github.com/andrew-verde/codexbar-cosmic-applet</url>
