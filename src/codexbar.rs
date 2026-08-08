@@ -42,7 +42,8 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 /// The CLI this applet drives. Every invocation is this name plus a fixed
-/// argument list; nothing user-supplied ever reaches a command line.
+/// argument list - inside a Flatpak, wrapped in `flatpak-spawn --host` - and
+/// nothing user-supplied ever reaches a command line.
 const PROGRAM: &str = "codexbar";
 
 /// One entry of the `codexbar usage --format json` array.
@@ -592,10 +593,11 @@ async fn run_codexbar(args: &[&str]) -> Result<std::process::Output, String> {
     let sandboxed = in_flatpak();
 
     for candidate in &candidates {
-        // `flatpak-spawn` itself always exists, so a missing host binary cannot
-        // surface as `NotFound`, and its exit status is 1 whether the binary was
-        // missing or ran and failed. Ask the host to resolve the candidate first
-        // so the fallback chain has something unambiguous to advance on.
+        // A missing host binary does not surface as `NotFound` here - that would
+        // describe `flatpak-spawn`, not what it was asked to run - and its exit
+        // status is 1 whether the binary was missing or ran and failed. Ask the
+        // host to resolve the candidate first, so the fallback chain has
+        // something unambiguous to advance on.
         if sandboxed && !resolves_on_host(candidate).await {
             continue;
         }
@@ -644,11 +646,20 @@ async fn run_cli(
 /// Whether the host can run `candidate`, asked before spawning it for real.
 ///
 /// `command -v` handles both shapes of the candidate list: a bare name is looked
-/// up on the host's `PATH`, an absolute path succeeds only when it exists and is
-/// executable. The host `PATH` seen through the portal is the login shell's, so
-/// it is generally better than the one the applet itself was started with. A
-/// failure to spawn the probe at all counts as unresolved, which just moves the
-/// loop on to the next candidate.
+/// up on the host's `PATH`, an absolute path resolves when it is there. Whether
+/// a non-executable file at that path counts is left to the host's `/bin/sh` -
+/// bash rejects it, dash does not - which at worst costs one failed spawn
+/// before the error is reported.
+///
+/// The portal runs the command in the session's environment, not the sandbox's:
+/// `PATH` there is the login shell's, so the bare name resolves against
+/// `~/.local/bin` and Homebrew even though the sandbox's own `PATH` is only
+/// `/app/bin:/usr/bin`. The absolute candidates still matter for sessions that
+/// never put those directories on `PATH` at all.
+///
+/// A failure to spawn the probe counts as unresolved and moves the loop on. That
+/// conflates an unresolvable candidate with the portal being unavailable, so a
+/// broken portal reports the CLI as missing rather than as unreachable.
 async fn resolves_on_host(candidate: &Path) -> bool {
     tokio::process::Command::new("flatpak-spawn")
         .arg("--host")

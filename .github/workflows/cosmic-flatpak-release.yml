@@ -39,17 +39,20 @@ jobs:
     steps:
       - name: Work out which tag is being published
         id: release
+        env:
+          # Via the environment rather than interpolated into the script: a tag
+          # name is attacker-controlled in the general case, and expressions are
+          # substituted before the shell ever sees them.
+          TAG_INPUT: ${{ inputs.tag || github.ref_name }}
         run: |
-          tag='${{ inputs.tag || github.ref_name }}'
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG_INPUT}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG_INPUT#v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v7
         with:
+          # The submission manifest pins a commit, so everything below has to
+          # come from the tag rather than from whatever main is at right now.
           ref: ${{ steps.release.outputs.tag }}
-          # The submission manifest pins a commit, so the SHA has to be the
-          # tag's, not whatever main happens to be at when this runs.
-          fetch-depth: 0
 
       - name: Resolve the tagged commit
         id: commit
@@ -137,9 +140,24 @@ jobs:
           Opened automatically by [\`cosmic-flatpak-release.yml\`](https://github.com/andrew-verde/codexbar-cosmic-applet/blob/main/.github/workflows/cosmic-flatpak-release.yml).
           EOF
 
-          gh pr create \
-            --repo "${UPSTREAM}" \
-            --base master \
-            --head "${FORK%%/*}:${branch}" \
-            --title "Update codexbar-cosmic-applet to ${TAG}" \
-            --body-file /tmp/pr-body.md
+          # Re-running a tag force-pushes the same branch, so there may already
+          # be an open pull request for it. `gh pr create` fails outright in
+          # that case, which would fail the job after the branch had already
+          # been updated correctly - update the existing one instead.
+          existing="$(gh pr list --repo "${UPSTREAM}" \
+            --head "${FORK%%/*}:${branch}" --state open \
+            --json url --jq '.[0].url // empty')"
+
+          if [ -n "${existing}" ]; then
+            gh pr edit "${existing}" \
+              --title "Update codexbar-cosmic-applet to ${TAG}" \
+              --body-file /tmp/pr-body.md
+            echo "Updated ${existing}"
+          else
+            gh pr create \
+              --repo "${UPSTREAM}" \
+              --base master \
+              --head "${FORK%%/*}:${branch}" \
+              --title "Update codexbar-cosmic-applet to ${TAG}" \
+              --body-file /tmp/pr-body.md
+          fi
