@@ -27,8 +27,8 @@ use crate::codexbar::{
 use crate::config::Config;
 use crate::icons::provider_icon;
 
-const ID: &str = "io.github.andrew-verde.CodexBarCosmicApplet";
-const ICON: &str = "io.github.andrew-verde.CodexBarCosmicApplet-symbolic";
+const ID: &str = "io.github.andrew_verde.codexbar-cosmic-applet";
+const ICON: &str = "io.github.andrew_verde.codexbar-cosmic-applet-symbolic";
 const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Height the scrolling body is capped at. The tab bar, padding and this must

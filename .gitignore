@@ -2,3 +2,5 @@
 /vendor
 vendor.tar
 /.cargo
+/flatpak/build
+/flatpak/.flatpak-builder

@@ -570,6 +570,10 @@ fn parse_output<T>(
 /// `PATH` always comes first, so a distro package or any binary the user has
 /// put on their `PATH` wins; everything after it is a pure fallback, tried only
 /// when the previous candidate does not exist.
+///
+/// Inside a Flatpak "does not exist" cannot be read off the exit status:
+/// `flatpak-spawn` exits 1 both when the host binary is missing and when the
+/// binary ran and failed, so each candidate is resolved on the host first.
 async fn run_codexbar(args: &[&str]) -> Result<std::process::Output, String> {
     // cosmic-panel applets are launched by the systemd graphical session, which
     // does not source ~/.bashrc or ~/.profile, so managers that only extend PATH
@@ -578,24 +582,85 @@ async fn run_codexbar(args: &[&str]) -> Result<std::process::Output, String> {
     let mut candidates = vec![PathBuf::from(PROGRAM)];
     candidates.extend(fallback_candidates());
 
+    // In a Flatpak build the CLI lives on the host, not in the sandbox, and has
+    // to stay there: it reads the user's provider credentials from ~/.codex,
+    // ~/.claude and friends, so a bundled sandboxed copy would need filesystem
+    // permissions broad enough to defeat the point of sandboxing it. Each
+    // invocation is therefore handed to `flatpak-spawn --host`. The candidate
+    // paths need no adjusting - $HOME is not rewritten inside the sandbox, so
+    // they already name host locations.
+    let sandboxed = in_flatpak();
+
     for candidate in &candidates {
-        match run_cli(candidate, args).await {
+        // `flatpak-spawn` itself always exists, so a missing host binary cannot
+        // surface as `NotFound`, and its exit status is 1 whether the binary was
+        // missing or ran and failed. Ask the host to resolve the candidate first
+        // so the fallback chain has something unambiguous to advance on.
+        if sandboxed && !resolves_on_host(candidate).await {
+            continue;
+        }
+        match run_cli(candidate, args, sandboxed).await {
             Ok(output) => return Ok(output),
             Err(e) if e.kind() == ErrorKind::NotFound => continue,
             Err(e) => return Err(format!("could not run codexbar: {e}")),
         }
     }
-    Err("codexbar CLI not found on PATH, in ~/.local/bin, or in Homebrew's bin dir.\n\
-         Install it from github.com/steipete/CodexBar."
-        .to_string())
+    if sandboxed {
+        Err("codexbar CLI not found on the host's PATH, in ~/.local/bin, or in Homebrew's \
+             bin dir.\nThe applet is sandboxed and runs it on the host, so install it there \
+             from github.com/steipete/CodexBar."
+            .to_string())
+    } else {
+        Err("codexbar CLI not found on PATH, in ~/.local/bin, or in Homebrew's bin dir.\n\
+             Install it from github.com/steipete/CodexBar."
+            .to_string())
+    }
 }
 
-async fn run_cli(program: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
-    tokio::process::Command::new(program)
-        .args(args)
+/// Whether the applet is running inside a Flatpak sandbox.
+///
+/// `/.flatpak-info` is placed in every sandbox by flatpak itself. `$FLATPAK_ID`
+/// is not a reliable substitute: it is only exported for launches that go
+/// through the desktop file, and cosmic-panel spawns applets directly.
+pub(crate) fn in_flatpak() -> bool {
+    Path::new("/.flatpak-info").exists()
+}
+
+async fn run_cli(
+    program: &Path,
+    args: &[&str],
+    sandboxed: bool,
+) -> std::io::Result<std::process::Output> {
+    let mut command = if sandboxed {
+        let mut command = tokio::process::Command::new("flatpak-spawn");
+        command.arg("--host").arg(program);
+        command
+    } else {
+        tokio::process::Command::new(program)
+    };
+    command.args(args).stdin(Stdio::null()).output().await
+}
+
+/// Whether the host can run `candidate`, asked before spawning it for real.
+///
+/// `command -v` handles both shapes of the candidate list: a bare name is looked
+/// up on the host's `PATH`, an absolute path succeeds only when it exists and is
+/// executable. The host `PATH` seen through the portal is the login shell's, so
+/// it is generally better than the one the applet itself was started with. A
+/// failure to spawn the probe at all counts as unresolved, which just moves the
+/// loop on to the next candidate.
+async fn resolves_on_host(candidate: &Path) -> bool {
+    tokio::process::Command::new("flatpak-spawn")
+        .arg("--host")
+        .arg("/bin/sh")
+        .arg("-c")
+        .arg(r#"command -v "$1""#)
+        .arg("sh")
+        .arg(candidate)
         .stdin(Stdio::null())
         .output()
         .await
+        .is_ok_and(|output| output.status.success())
 }
 
 /// Where to look when `codexbar` is not on `PATH`.

@@ -7,11 +7,12 @@ vendor_args := if vendor == '1' { '--frozen --offline' } else { '' }
 debug_args := if debug == '1' { '' } else { '--release' }
 
 name := 'codexbar-cosmic-applet'
-appid := 'io.github.andrew-verde.CodexBarCosmicApplet'
+appid := 'io.github.andrew_verde.codexbar-cosmic-applet'
 
 targetdir := env('CARGO_TARGET_DIR', 'target')
 sharedir := rootdir + prefix + '/share'
 iconsdir := sharedir + '/icons/hicolor/scalable/apps'
+metainfodir := sharedir + '/metainfo'
 bindir := rootdir + prefix + '/bin'
 
 default: run
@@ -46,17 +47,21 @@ _install_icon:
 _install_desktop:
     install -Dm0644 'data/{{appid}}.desktop' {{sharedir}}/applications/{{appid}}.desktop
 
+_install_metainfo:
+    install -Dm0644 'data/{{appid}}.metainfo.xml' {{metainfodir}}/{{appid}}.metainfo.xml
+
 _install_bin:
     install -Dm0755 {{targetdir}}/{{target}}/{{name}} {{bindir}}/{{name}}
 
 # Installs files into the system
-install: _install_icon _install_desktop _install_bin
+install: _install_icon _install_desktop _install_metainfo _install_bin
 
 # Uninstalls the applet from the system
 uninstall:
     rm -f {{bindir}}/{{name}}
     rm -f {{iconsdir}}/{{appid}}-symbolic.svg
     rm -f {{sharedir}}/applications/{{appid}}.desktop
+    rm -f {{metainfodir}}/{{appid}}.metainfo.xml
 
 # Vendor Cargo dependencies locally
 vendor:

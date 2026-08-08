@@ -78,14 +78,52 @@ sudo just install
 | file | destination |
 | --- | --- |
 | `codexbar-cosmic-applet` | `/usr/bin/` |
-| `io.github.andrew-verde.CodexBarCosmicApplet.desktop` | `/usr/share/applications/` |
-| `io.github.andrew-verde.CodexBarCosmicApplet-symbolic.svg` | `/usr/share/icons/hicolor/scalable/apps/` |
+| `io.github.andrew_verde.codexbar-cosmic-applet.desktop` | `/usr/share/applications/` |
+| `io.github.andrew_verde.codexbar-cosmic-applet-symbolic.svg` | `/usr/share/icons/hicolor/scalable/apps/` |
+| `io.github.andrew_verde.codexbar-cosmic-applet.metainfo.xml` | `/usr/share/metainfo/` |
 
 To install somewhere else, override `prefix` or `rootdir`, e.g.
 `just prefix=$HOME/.local install` (COSMIC also reads applets from
 `~/.local/share/applications`).
 
 Remove it again with `sudo just uninstall`. Run the unit tests with `just test`.
+
+### Flatpak
+
+`flatpak/io.github.andrew_verde.codexbar-cosmic-applet.json` builds the applet as
+a Flatpak:
+
+```sh
+flatpak install flathub org.flatpak.Builder
+flatpak install flathub com.system76.Cosmic.BaseApp//stable \
+    org.freedesktop.Sdk//25.08 org.freedesktop.Sdk.Extension.rust-stable//25.08
+
+cd flatpak
+flatpak run --filesystem=host --share=network \
+    --env=FLATPAK_USER_DIR="$HOME/.local/share/flatpak" \
+    --command=flatpak-builder org.flatpak.Builder \
+    --user --force-clean --install \
+    build io.github.andrew_verde.codexbar-cosmic-applet.json
+```
+
+`FLATPAK_USER_DIR` is needed because `org.flatpak.Builder` redirects
+`XDG_DATA_HOME` into its own per-app data directory, so without it the builder
+cannot see the `com.system76.Cosmic.BaseApp` the manifest builds on and fails
+with "not installed" even when it is.
+
+`flatpak/cargo-sources.json` pins every crate for the offline build inside the
+sandbox; regenerate it whenever `Cargo.lock` changes:
+
+```sh
+flatpak run --filesystem=host --command=flatpak-cargo-generator \
+    org.flatpak.Builder Cargo.lock -o flatpak/cargo-sources.json
+```
+
+`codexbar` itself still has to be installed on the host, not in the sandbox -
+it holds your provider credentials in `~/.codex`, `~/.claude` and the like. The
+sandboxed applet runs it through `flatpak-spawn --host`, and reads its own
+config from the host's `~/.config/codexbar-cosmic-applet/config.toml` rather
+than the per-app directory Flatpak would otherwise point it at.
 
 ## Adding it to the panel
 
@@ -95,6 +133,11 @@ Remove it again with `sudo just uninstall`. Run the unit tests with `just test`.
 
 You may need to log out and back in (or restart `cosmic-panel`) before a
 newly installed applet appears in that list.
+
+If you are upgrading from a version before the applet ID changed from
+`io.github.andrew-verde.*` to `io.github.andrew_verde.*` (a hyphen is not
+legal in that position in a Flatpak ID), the panel still refers to the old ID.
+Remove the applet in **Settings → Desktop → Panel** and add it again.
 
 ## Configuration
 

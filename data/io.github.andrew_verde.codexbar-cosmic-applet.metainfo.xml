@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.andrew_verde.codexbar-cosmic-applet</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <project_group>COSMIC</project_group>
+  <name>CodexBar</name>
+  <summary>Agent usage limits in the COSMIC panel</summary>
+
+  <developer id="io.github.andrew_verde">
+    <name>Andrew Green</name>
+  </developer>
+
+  <description>
+    <p>
+      A native COSMIC panel applet that shows how much of your AI coding agent
+      usage limits you have left, in the spirit of the macOS app CodexBar.
+    </p>
+    <p>
+      Clicking the panel icon opens a popup with a tab per provider, plus an
+      Overview tab that condenses every provider to one line. A provider's tab
+      shows session, weekly and monthly usage as a percentage and a progress
+      bar, when each limit window resets, the pace projection, today's and the
+      last 30 days' cost and token counts, redeemable limit-reset credit, and
+      remaining credits where the provider reports them. State refreshes every
+      60 seconds and whenever the popup is opened.
+    </p>
+    <p>
+      The applet does not talk to any provider itself. It shells out to the
+      codexbar command-line tool from CodexBar, which must be installed
+      separately on the host, and renders whatever that reports - so every
+      provider CodexBar supports works here too, including Codex, Claude,
+      Gemini, Copilot and Cursor.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.andrew_verde.codexbar-cosmic-applet.desktop</launchable>
+  <icon type="stock">io.github.andrew_verde.codexbar-cosmic-applet-symbolic</icon>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/andrew-verde/codexbar-cosmic-applet/main/docs/screenshot.png</image>
+      <caption>The popup's Claude tab, with session and weekly usage, pace projection and cost stats</caption>
+    </screenshot>
+  </screenshots>
+
+  <url type="homepage">https://github.com/andrew-verde/codexbar-cosmic-applet</url>
+  <url type="bugtracker">https://github.com/andrew-verde/codexbar-cosmic-applet/issues</url>
+  <url type="vcs-browser">https://github.com/andrew-verde/codexbar-cosmic-applet</url>
+
+  <provides>
+    <id>com.system76.CosmicApplet</id>
+    <binary>codexbar-cosmic-applet</binary>
+  </provides>
+
+  <categories>
+    <category>Utility</category>
+  </categories>
+
+  <keywords>
+    <keyword>COSMIC</keyword>
+    <keyword>applet</keyword>
+    <keyword>usage</keyword>
+    <keyword>Codex</keyword>
+    <keyword>Claude</keyword>
+  </keywords>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.0" date="2026-08-08">
+      <description>
+        <p>First release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -191,8 +191,20 @@ pub fn parse_config(contents: &str) -> Result<Config, String> {
 }
 
 /// Path of the config file, or `None` when no config directory can be located.
+///
+/// Inside a Flatpak sandbox `$XDG_CONFIG_HOME` is rewritten to
+/// `~/.var/app/<app-id>/config`, which is not the path the README documents and
+/// not where the user edits the file, so the host's `~/.config` is used instead
+/// ($HOME is not rewritten). That deliberately ignores a non-default
+/// `$XDG_CONFIG_HOME` set on the host, because the sandbox does not expose the
+/// host's value.
 pub fn config_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join(CONFIG_DIR).join("config.toml"))
+    let config_dir = if crate::codexbar::in_flatpak() {
+        dirs::home_dir()?.join(".config")
+    } else {
+        dirs::config_dir()?
+    };
+    Some(config_dir.join(CONFIG_DIR).join("config.toml"))
 }
 
 /// Load the config, falling back to defaults.
