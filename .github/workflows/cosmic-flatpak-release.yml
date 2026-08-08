@@ -111,8 +111,11 @@ jobs:
           cp "/tmp/${APP_ID}.json" "app/${APP_ID}/${APP_ID}.json"
           cp /tmp/cargo-sources.json "app/${APP_ID}/cargo-sources.json"
 
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # Authored as a person rather than a bot: this commit lands in someone
+          # else's repository, where a name is more use to a reviewer than the
+          # generic Actions identity.
+          git config user.name 'Andrew Green'
+          git config user.email 'andrew.green98@gmail.com'
           git add "app/${APP_ID}"
           if git diff --cached --quiet; then
             echo "Nothing changed - ${TAG} is already what is published."
