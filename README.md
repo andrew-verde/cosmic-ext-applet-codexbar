@@ -126,14 +126,33 @@ sandboxed applet runs it through `flatpak-spawn --host`, and reads its own
 config from the host's `~/.config/codexbar-cosmic-applet/config.toml` rather
 than the per-app directory Flatpak would otherwise point it at.
 
+One trap when building locally with the `org.flatpak.Builder` flatpak rather
+than a distribution's `flatpak-builder`: its export step writes the path of the
+`flatpak` binary it can see, `/app/bin/flatpak`, into the exported desktop
+file's `Exec` line, and that path does not exist on the host. The symptom is
+not an error - `cosmic-panel` decides whether to hand an applet the Wayland
+socket by where its desktop file lives, so a corrected copy placed anywhere
+outside a Flatpak exports directory is treated as a normal application and the
+applet renders as a floating window in the middle of the screen instead. Fix it
+in place, keeping the file where flatpak put it:
+
+```sh
+sed -i 's|^Exec=/app/bin/flatpak |Exec=/usr/bin/flatpak |' \
+    ~/.local/share/flatpak/exports/share/applications/io.github.andrew_verde.codexbar-cosmic-applet.desktop
+```
+
+Builds made with a native `flatpak-builder`, including the ones published to
+the COSMIC Store, are unaffected.
+
 ## Adding it to the panel
 
 1. Open **Settings → Desktop → Panel** (or **Dock**).
 2. Choose **Configure panel applets**.
 3. Find **CodexBar** in the list and add it to whichever section you prefer.
 
-You may need to log out and back in (or restart `cosmic-panel`) before a
-newly installed applet appears in that list.
+A newly installed applet usually does not appear in that list until you log out
+and back in. Restarting `cosmic-panel` alone is often not enough, so if it is
+missing, log out before assuming the install failed.
 
 If you are upgrading from a version before the applet ID changed from
 `io.github.andrew-verde.*` to `io.github.andrew_verde.*` (a hyphen is not
