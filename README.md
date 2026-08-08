@@ -160,9 +160,13 @@ lowerCamelCase keys and ISO 8601 dates.
 Only the fields this applet displays are decoded — `provider`, `account`,
 `version`, `source`, `usage.{primary,secondary,tertiary}.{usedPercent,
 windowMinutes,resetsAt,resetDescription}`, `usage.updatedAt`,
-`usage.identity.loginMethod`, `usage.codexResetCredits.credits[].{status,
+`usage.identity.{loginMethod,accountEmail}`,
+`usage.codexResetCredits.credits[].{status,
 expires_at}`, `pace.{primary,secondary,tertiary}`, `credits.remaining` and
-`error.message`. From `codexbar cost` it reads
+`error.message`. The account shown beside the provider name comes from
+`usage.identity.accountEmail`; the top-level `account` that `docs/cli.md`
+documents is not emitted by the CLI in practice and is only a fallback. From
+`codexbar cost` it reads
 `provider`, `currencyCode`, `sessionCostUSD`, `sessionTokens`,
 `last30DaysCostUSD` and `last30DaysTokens`. Everything is optional and unknown
 keys are ignored, so a CodexBar release that adds or renames fields degrades

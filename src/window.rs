@@ -319,11 +319,11 @@ impl Window {
     /// One condensed line per provider for the Overview tab: enough to scan
     /// many providers at once without the full per-window layout.
     fn provider_summary<'a>(&'a self, payload: &'a ProviderPayload) -> Element<'a, Message> {
-        let mut title = widget::Row::new().spacing(6).align_y(Vertical::Center);
+        let mut title = widget::Row::new().spacing(8).align_y(Vertical::Center);
         if let Some(icon) = provider_glyph(&payload.provider) {
-            title = title.push(glyph(icon, TAB_ICON_SIZE));
+            title = title.push(glyph(icon, HEADER_ICON_SIZE));
         }
-        title = title.push(widget::text::title4(payload.label()));
+        title = title.push(widget::text::title3(payload.label()));
 
         let mut column = widget::Column::new()
             .spacing(4)
@@ -682,8 +682,8 @@ fn pace_line(pace: &PaceWindow) -> String {
 }
 
 fn account_caption<'a>(payload: &'a ProviderPayload, config: &Config) -> Element<'a, Message> {
-    let account = match (config.show_account, &payload.account) {
-        (true, Some(account)) => account.clone(),
+    let account = match (config.show_account, payload.account_text()) {
+        (true, Some(account)) => account.to_string(),
         _ => String::new(),
     };
     widget::text::caption(account).into()
@@ -870,6 +870,36 @@ mod tests {
         assert!(
             narrowest.size().height <= CAPTION_LINE * 2.0 + 1.0,
             "pace line wrapped more than once: {narrowest:?}"
+        );
+    }
+
+    /// `show_account = false` still blanks the caption now that there is a real
+    /// email behind it - the toggle is what a streamer hides their address with.
+    #[test]
+    fn show_account_toggles_the_identity_email() {
+        let payload = &crate::codexbar::parse_usage_json(
+            r#"[{"provider": "codex", "usage":
+                 {"identity": {"accountEmail": "redacted@example.com"}}}]"#,
+        )
+        .unwrap()[0];
+
+        let shown = layout(account_caption(payload, &Config::default()), f32::INFINITY);
+        assert!(shown.size().width > 0.0);
+        assert_eq!(
+            shown.size().width,
+            caption_width("redacted@example.com"),
+            "the caption should render the identity email"
+        );
+
+        let hidden = Config {
+            show_account: false,
+            ..Config::default()
+        };
+        assert_eq!(
+            layout(account_caption(payload, &hidden), f32::INFINITY)
+                .size()
+                .width,
+            0.0
         );
     }
 

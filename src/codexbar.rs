@@ -89,14 +89,18 @@ pub struct UsageSnapshot {
     pub codex_reset_credits: Option<CodexResetCredits>,
 }
 
-/// Who the numbers belong to. Only `loginMethod` is decoded; the account email
-/// is already carried by `ProviderPayload::account`.
+/// Who the numbers belong to. This, not the top-level `ProviderPayload::account`,
+/// is where the live CLI reports the signed-in email.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Identity {
     /// Plan or login type, e.g. `plus`, `Antigravity Starter Quota`.
     #[serde(default)]
     pub login_method: Option<String>,
+    /// Signed-in account, usually an email address. Absent for providers whose
+    /// backing CLI does not report one (Claude, at the time of writing).
+    #[serde(default)]
+    pub account_email: Option<String>,
 }
 
 /// `usage.codexResetCredits`: OpenAI's "Limit Reset Credits", the periodic
@@ -309,6 +313,19 @@ impl ProviderPayload {
                 }
             }
         }
+    }
+
+    /// Signed-in account for this provider, usually an email address.
+    ///
+    /// The live CLI reports it as `usage.identity.accountEmail`; the top-level
+    /// `account` documented in `docs/cli.md` is never populated in practice but
+    /// is still honoured as a fallback in case some provider does emit it.
+    pub fn account_text(&self) -> Option<&str> {
+        self.usage
+            .as_ref()
+            .and_then(|usage| usage.identity.as_ref())
+            .and_then(|identity| identity.account_email.as_deref())
+            .or(self.account.as_deref())
     }
 }
 
@@ -814,6 +831,29 @@ mod tests {
         assert_eq!(ag_primary.used_percent, Some(0.0));
         assert!(ag_primary.window_minutes.is_none());
         assert_eq!(ag_primary.window_label("Primary"), "Primary");
+    }
+
+    /// The live CLI carries the email in `usage.identity.accountEmail`, never in
+    /// the top-level `account` that `docs/cli.md` documents.
+    #[test]
+    fn resolves_the_account_from_identity() {
+        let payloads = parse_usage_json(REAL_WORLD).unwrap();
+        assert!(payloads.iter().all(|payload| payload.account.is_none()));
+
+        assert_eq!(payloads[0].account_text(), Some("redacted@example.com"));
+        assert_eq!(payloads[2].account_text(), Some("redacted2@example.com"));
+        // Claude's identity reports neither loginMethod nor accountEmail.
+        assert_eq!(payloads[1].account_text(), None);
+
+        // The documented top-level field still wins when there is no identity.
+        let documented = parse_usage_json(MULTI_PROVIDER).unwrap();
+        assert_eq!(documented[1].account_text(), None);
+        assert_eq!(
+            parse_usage_json(r#"[{"provider": "codex", "account": "legacy@example.com"}]"#)
+                .unwrap()[0]
+                .account_text(),
+            Some("legacy@example.com")
+        );
     }
 
     #[test]
