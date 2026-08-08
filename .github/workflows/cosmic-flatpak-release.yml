@@ -72,7 +72,10 @@ jobs:
 
       - name: Install the cargo source generator
         run: |
-          python3 -m pip install --quiet aiohttp toml
+          # aiohttp and tomlkit are what the generator imports. It is fetched
+          # from master rather than pinned, so if that list changes again this
+          # step is where it will fail, loudly and before anything is pushed.
+          python3 -m pip install --quiet aiohttp tomlkit
           curl -fsSL -o /tmp/flatpak-cargo-generator.py \
             https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
 
