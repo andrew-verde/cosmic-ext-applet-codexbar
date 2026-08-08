@@ -1,0 +1,142 @@
+name: Publish to the COSMIC Store
+
+# pop-os/cosmic-flatpak pins each app to an immutable commit, so a release there
+# is a pull request against their repository rather than anything this one can
+# push. Nothing watches this repository's main branch - if this workflow does
+# not run, the Store keeps serving the last published tag indefinitely.
+#
+# So: tagging a release is the only manual step. This regenerates the crate
+# lockfile mirror, derives the submission manifest from the manifest that was
+# actually tested here, and opens the pull request. A maintainer over there
+# still has to merge it, which is out of our hands and has historically taken
+# days rather than minutes.
+#
+# The weekly icon sync deliberately does not trigger this. Icons are compiled
+# in, so publishing them needs a rebuild, but accumulating them into main and
+# tagging when it is worth publishing beats a Store release per icon commit.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish, e.g. v0.1.0'
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  APP_ID: io.github.andrew_verde.codexbar-cosmic-applet
+  FORK: andrew-verde/cosmic-flatpak
+  UPSTREAM: pop-os/cosmic-flatpak
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Work out which tag is being published
+        id: release
+        run: |
+          tag='${{ inputs.tag || github.ref_name }}'
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          # The submission manifest pins a commit, so the SHA has to be the
+          # tag's, not whatever main happens to be at when this runs.
+          fetch-depth: 0
+
+      - name: Resolve the tagged commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Check the release is described in the metainfo
+        # AppStream drives what the Store shows. A release with no matching
+        # <release> entry publishes fine and then looks empty in the listing,
+        # which is not worth finding out about after a maintainer has merged.
+        run: |
+          if ! grep -q 'version="${{ steps.release.outputs.version }}"' \
+               "data/${APP_ID}.metainfo.xml"; then
+            echo "::error::data/${APP_ID}.metainfo.xml has no <release version=\"${{ steps.release.outputs.version }}\">."
+            echo "Add the release entry to the metainfo and re-tag."
+            exit 1
+          fi
+
+      - name: Install the cargo source generator
+        run: |
+          python3 -m pip install --quiet aiohttp toml
+          curl -fsSL -o /tmp/flatpak-cargo-generator.py \
+            https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+
+      - name: Regenerate cargo-sources.json
+        # The sandbox build is offline, so every crate has to be listed with its
+        # checksum. Generating this from the tag's own Cargo.lock is the whole
+        # reason a release cannot just be a version bump in their manifest.
+        run: python3 /tmp/flatpak-cargo-generator.py Cargo.lock -o /tmp/cargo-sources.json
+
+      - name: Derive the submission manifest
+        run: |
+          python3 tools/cosmic-flatpak-manifest.py \
+            --tag '${{ steps.release.outputs.tag }}' \
+            --commit '${{ steps.commit.outputs.sha }}' \
+            --output "/tmp/${APP_ID}.json"
+          cat "/tmp/${APP_ID}.json"
+
+      - name: Open the pull request
+        env:
+          # A classic PAT with `repo` scope, or a fine-grained token with
+          # Contents+Pull requests write on the fork. github.token cannot push
+          # to another repository or open a cross-repository pull request.
+          GH_TOKEN: ${{ secrets.COSMIC_FLATPAK_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: |
+          set -euo pipefail
+          branch="release/${APP_ID}-${VERSION}"
+
+          # Branch from upstream rather than from the fork, so a fork that has
+          # drifted behind master cannot turn the pull request into a diff full
+          # of other people's applets.
+          git clone --depth 1 "https://github.com/${UPSTREAM}.git" /tmp/cosmic-flatpak
+          cd /tmp/cosmic-flatpak
+          git checkout -b "${branch}"
+
+          mkdir -p "app/${APP_ID}"
+          cp "/tmp/${APP_ID}.json" "app/${APP_ID}/${APP_ID}.json"
+          cp /tmp/cargo-sources.json "app/${APP_ID}/cargo-sources.json"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "app/${APP_ID}"
+          if git diff --cached --quiet; then
+            echo "Nothing changed - ${TAG} is already what is published."
+            exit 0
+          fi
+          git commit -m "Update codexbar-cosmic-applet to ${TAG}"
+
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${FORK}.git" \
+            "HEAD:${branch}"
+
+          cat > /tmp/pr-body.md <<EOF
+          Updates \`${APP_ID}\` to ${TAG}.
+
+          - Pinned to [\`${SHA}\`](https://github.com/andrew-verde/codexbar-cosmic-applet/commit/${SHA}) (tag \`${TAG}\`)
+          - \`cargo-sources.json\` regenerated from that tag's \`Cargo.lock\`
+          - Release notes: https://github.com/andrew-verde/codexbar-cosmic-applet/releases/tag/${TAG}
+
+          Opened automatically by [\`cosmic-flatpak-release.yml\`](https://github.com/andrew-verde/codexbar-cosmic-applet/blob/main/.github/workflows/cosmic-flatpak-release.yml).
+          EOF
+
+          gh pr create \
+            --repo "${UPSTREAM}" \
+            --base master \
+            --head "${FORK%%/*}:${branch}" \
+            --title "Update codexbar-cosmic-applet to ${TAG}" \
+            --body-file /tmp/pr-body.md
