@@ -55,6 +55,14 @@ const OVERVIEW_ICON: &[u8] = include_bytes!("../data/icons/overview-symbolic.svg
 /// window, cost). The macOS app leans on whitespace to separate these.
 const BLOCK_SPACING: u16 = 14;
 
+/// Gap between an Overview row's header (provider name, account) and its bars.
+/// Wider than the gap between the bars themselves so the two read as separate
+/// groups rather than one evenly spaced stack.
+const SUMMARY_HEADER_SPACING: u16 = 10;
+
+/// Gap between the session and weekly bar groups of one Overview row.
+const SUMMARY_BAR_SPACING: u16 = 6;
+
 /// Identifies the autosizing popup body to the shell, mirroring the private
 /// `AUTOSIZE_ID` that `cosmic::applet::Context::popup_container` uses.
 static AUTOSIZE_ID: LazyLock<cosmic::iced::id::Id> =
@@ -325,8 +333,11 @@ impl Window {
         }
         title = title.push(widget::text::title3(payload.label()));
 
-        let mut column = widget::Column::new()
-            .spacing(4)
+        // Spacing here is deliberately uneven: the account line belongs to the
+        // header, so the bars below it get a wider gap, while the bars
+        // themselves stay tightly grouped (see `bars` below).
+        let column = widget::Column::new()
+            .spacing(SUMMARY_HEADER_SPACING)
             .width(Length::Fill)
             .push(split_row(title, account_caption(payload, &self.config)));
 
@@ -336,30 +347,52 @@ impl Window {
                 .into();
         }
 
-        // The shortest window is the most urgent one; providers without it
-        // (Codex often has no session window) fall back to the weekly figure.
-        let headline = payload.usage.as_ref().and_then(|usage| {
-            usage
-                .primary
-                .as_ref()
-                .or(usage.secondary.as_ref())
-                .or(usage.tertiary.as_ref())
-        });
-        let Some(window) = headline else {
+        // Session above weekly, each drawn only when the provider reports it
+        // (Codex often has no session window), so a provider that starts
+        // reporting one picks up its bar with no code change. Monthly stays out
+        // of the Overview tab.
+        let mut bars = widget::Column::new()
+            .spacing(SUMMARY_BAR_SPACING)
+            .width(Length::Fill);
+        let mut any = false;
+        if let Some(usage) = &payload.usage {
+            for (window, fallback) in [
+                (usage.primary.as_ref(), "Session"),
+                (usage.secondary.as_ref(), "Weekly"),
+            ] {
+                let Some(window) = window else { continue };
+                any = true;
+                bars = bars.push(self.summary_window(window, fallback));
+            }
+        }
+
+        if !any {
             return column
                 .push(widget::text::caption("No usage data reported.").width(Length::Fill))
                 .into();
-        };
+        }
 
-        column = column
+        column.push(bars).into()
+    }
+
+    /// One bar and its percentage/label line for the Overview tab, kept tight
+    /// enough to read as a single unit.
+    fn summary_window<'a>(
+        &'a self,
+        window: &'a RateLimitWindow,
+        fallback: &str,
+    ) -> Element<'a, Message> {
+        widget::Column::new()
+            .spacing(2)
+            .width(Length::Fill)
             .push(widget::determinate_linear(
                 self.config.usage_display.fraction(window.fraction()),
             ))
             .push(split_row(
                 widget::text::body(self.percent_text(window)),
-                widget::text::caption(window.window_label("Usage")),
-            ));
-        column.into()
+                widget::text::caption(window.window_label(fallback)),
+            ))
+            .into()
     }
 
     /// The full macOS-style layout for one provider.
