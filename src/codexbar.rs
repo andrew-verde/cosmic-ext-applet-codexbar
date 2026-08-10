@@ -88,6 +88,12 @@ pub struct UsageSnapshot {
     pub identity: Option<Identity>,
     #[serde(default)]
     pub codex_reset_credits: Option<CodexResetCredits>,
+    /// Extra windows the provider reports beside the three numbered slots.
+    /// Only their titles are read, never their numbers - see
+    /// [`UsageSnapshot::window_label_overrides`]. Providers that report none
+    /// simply have an empty list.
+    #[serde(default)]
+    pub extra_rate_windows: Vec<ExtraRateWindow>,
 }
 
 /// Who the numbers belong to. This, not the top-level `ProviderPayload::account`,
@@ -151,6 +157,25 @@ pub struct RateLimitWindow {
     /// Human readable reset hint (e.g. "today at 3:00 PM") when the CLI has one.
     #[serde(default)]
     pub reset_description: Option<String>,
+}
+
+/// One entry of `usage.extraRateWindows`: a named window sitting outside the
+/// numbered `primary`/`secondary`/`tertiary` slots.
+///
+/// These are not drawn as rows. Upstream notes that some of them carry reset
+/// metadata without a real usage figure, so rendering their `usedPercent` would
+/// invent an exhausted quota; the applet reads nothing from them but the title.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtraRateWindow {
+    /// Display name of the pool, e.g. "Gemini weekly".
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Stable identifier, e.g. `antigravity-quota-summary-gemini-weekly`.
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub window: Option<RateLimitWindow>,
 }
 
 /// Top-level `pace` object, mirroring [`UsageSnapshot`]'s window keys.
@@ -384,6 +409,68 @@ impl UsageSnapshot {
             .filter(|credit| credit.is_available(now))
             .filter_map(|credit| credit.expires_at)
             .min()
+    }
+
+    /// Replacement labels for the primary/secondary/tertiary slots, in that
+    /// order, for the case where the derived labels would not tell two windows
+    /// apart. `None` in a slot means [`RateLimitWindow::window_label`] stands.
+    ///
+    /// Antigravity is the reason this exists. It reports two separate quota
+    /// pools - Gemini, and Claude/GPT - as `primary` and `secondary`, and both
+    /// are 10080-minute windows, so both derive "Weekly" and the popup shows two
+    /// rows nothing distinguishes. The CLI does name the pools, but only in
+    /// `extraRateWindows`, whose entries line up positionally with the numbered
+    /// slots: the first extra describes `primary`, the second `secondary`.
+    ///
+    /// Only titles are borrowed, never numbers, and the extras are never drawn
+    /// as rows of their own.
+    ///
+    /// A slot is overridden only when all of the following hold, which leaves
+    /// every provider whose labels already differ - Codex and Claude report a
+    /// 300-minute session beside a weekly window - completely untouched:
+    ///
+    /// * two or more of the reported windows derive the same label, so there is
+    ///   an actual collision to resolve;
+    /// * the extra at the slot's own position exists and carries a title;
+    /// * that extra's window has the same length and reset time as the slot's,
+    ///   a shape check so an unrelated extra cannot capture a label by sitting
+    ///   in the right position.
+    ///
+    /// `fallbacks` are the labels the caller uses for windows that report no
+    /// `windowMinutes`, passed in so the collision is judged against the text
+    /// that would actually be shown.
+    pub fn window_label_overrides(&self, fallbacks: [&str; 3]) -> [Option<String>; 3] {
+        let slots = [
+            self.primary.as_ref(),
+            self.secondary.as_ref(),
+            self.tertiary.as_ref(),
+        ];
+        let labels: Vec<String> = slots
+            .iter()
+            .copied()
+            .zip(fallbacks)
+            .filter_map(|(window, fallback)| Some(window?.window_label(fallback)))
+            .collect();
+        let collides = labels
+            .iter()
+            .any(|label| labels.iter().filter(|other| *other == label).count() > 1);
+        if !collides {
+            return [None, None, None];
+        }
+
+        std::array::from_fn(|slot| {
+            let window = slots[slot]?;
+            let extra = self.extra_rate_windows.get(slot)?;
+            let title = extra.title.as_deref()?.trim();
+            let extra_window = extra.window.as_ref()?;
+            if title.is_empty()
+                || extra_window.window_minutes != window.window_minutes
+                || extra_window.resets_at != window.resets_at
+            {
+                return None;
+            }
+            Some(title.to_string())
+        })
     }
 
     /// Plan label from `identity.loginMethod`, capitalised, e.g. "Plus".
@@ -1222,6 +1309,126 @@ mod tests {
                 .unwrap()
                 .codex_reset_credits
                 .is_none()
+        );
+    }
+
+    /// Live `codexbar usage --format json` output for antigravity, captured
+    /// from the CLI with the account email redacted. Its two windows are
+    /// separate quota pools rather than a session and a weekly limit, but both
+    /// are 10080-minute windows, so both derive "Weekly" and only
+    /// `extraRateWindows` says which pool is which.
+    const ANTIGRAVITY_EXTRAS: &str = r#"[
+      {
+        "provider": "antigravity",
+        "usage": {
+          "primary":   { "usedPercent": 0, "windowMinutes": 10080, "resetsAt": "2026-08-17T08:24:14Z" },
+          "secondary": { "usedPercent": 0, "windowMinutes": 10080, "resetsAt": "2026-08-17T08:24:14Z" },
+          "tertiary": null,
+          "extraRateWindows": [
+            { "title": "Gemini weekly",     "id": "antigravity-quota-summary-gemini-weekly",
+              "window": { "windowMinutes": 10080, "usedPercent": 0, "resetsAt": "2026-08-17T08:24:14Z" } },
+            { "title": "Claude/GPT weekly", "id": "antigravity-quota-summary-3p-weekly",
+              "window": { "windowMinutes": 10080, "resetsAt": "2026-08-17T08:24:14Z", "usedPercent": 0 } }
+          ],
+          "identity": {
+            "accountEmail": "redacted@example.com",
+            "providerID": "antigravity",
+            "loginMethod": "Antigravity Starter Quota"
+          },
+          "updatedAt": "2026-08-10T08:24:14Z"
+        },
+        "source": "cli"
+      }
+    ]"#;
+
+    /// The same payload with the extras' reset times moved a day out, so they
+    /// no longer match the windows they sit beside.
+    const ANTIGRAVITY_MISMATCHED_EXTRAS: &str = r#"[
+      {
+        "provider": "antigravity",
+        "usage": {
+          "primary":   { "usedPercent": 0, "windowMinutes": 10080, "resetsAt": "2026-08-17T08:24:14Z" },
+          "secondary": { "usedPercent": 0, "windowMinutes": 10080, "resetsAt": "2026-08-17T08:24:14Z" },
+          "extraRateWindows": [
+            { "title": "Gemini weekly",
+              "window": { "windowMinutes": 10080, "usedPercent": 0, "resetsAt": "2026-08-18T08:24:14Z" } },
+            { "title": "Claude/GPT weekly",
+              "window": { "windowMinutes": 4320, "usedPercent": 0, "resetsAt": "2026-08-17T08:24:14Z" } }
+          ]
+        },
+        "source": "cli"
+      }
+    ]"#;
+
+    /// The labels the two tabs show, i.e. an override where there is one and
+    /// the derived label everywhere else.
+    fn labels_of(payload: &str) -> Vec<String> {
+        let usage = usage_of(payload);
+        let overrides = usage.window_label_overrides(["Session", "Weekly", "Monthly"]);
+        [
+            usage.primary.as_ref(),
+            usage.secondary.as_ref(),
+            usage.tertiary.as_ref(),
+        ]
+        .into_iter()
+        .zip(overrides)
+        .zip(["Session", "Weekly", "Monthly"])
+        .filter_map(|((window, label), fallback)| {
+            let window = window?;
+            Some(label.unwrap_or_else(|| window.window_label(fallback)))
+        })
+        .collect()
+    }
+
+    #[test]
+    fn names_antigravitys_colliding_windows_from_their_extras() {
+        assert_eq!(
+            labels_of(ANTIGRAVITY_EXTRAS),
+            ["Gemini weekly", "Claude/GPT weekly"]
+        );
+    }
+
+    #[test]
+    fn leaves_providers_with_distinct_windows_alone() {
+        // Claude reports a 300-minute session beside a weekly window, so there
+        // is no collision and nothing to override.
+        let claude = parse_usage_json(REAL_WORLD).unwrap()[1]
+            .usage
+            .clone()
+            .unwrap();
+        assert_eq!(
+            claude.window_label_overrides(["Session", "Weekly", "Monthly"]),
+            [None, None, None]
+        );
+    }
+
+    #[test]
+    fn ignores_extras_that_do_not_match_the_window_beside_them() {
+        // Both extras are titled, and the labels do collide, but one differs in
+        // reset time and the other in window length, so neither may claim a row.
+        let usage = usage_of(ANTIGRAVITY_MISMATCHED_EXTRAS);
+        assert_eq!(usage.extra_rate_windows.len(), 2);
+        assert_eq!(labels_of(ANTIGRAVITY_MISMATCHED_EXTRAS), ["Weekly", "Weekly"]);
+    }
+
+    #[test]
+    fn derives_labels_as_before_without_extras() {
+        // Codex: a session and a weekly window, neither colliding. Antigravity
+        // in the real-world payload reports no window lengths at all, so both
+        // labels come from the callers' fallbacks and stay distinct.
+        let payloads = parse_usage_json(REAL_WORLD).unwrap();
+        for payload in &payloads {
+            let usage = payload.usage.as_ref().unwrap();
+            assert!(usage.extra_rate_windows.is_empty());
+        }
+        assert_eq!(labels_of(MULTI_PROVIDER), ["Session", "Weekly"]);
+        assert_eq!(
+            payloads[2]
+                .usage
+                .as_ref()
+                .unwrap()
+                .window_label_overrides(["Session", "Weekly", "Monthly"]),
+            [None, None, None]
         );
     }
 

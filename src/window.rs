@@ -51,6 +51,12 @@ const HEADER_ICON_SIZE: u16 = 24;
 /// beyond this crate's.
 const OVERVIEW_ICON: &[u8] = include_bytes!("../data/icons/overview-symbolic.svg");
 
+/// Labels for the primary/secondary/tertiary windows when the provider reports
+/// no window length to derive one from. Named here because both tabs use them
+/// and `UsageSnapshot::window_label_overrides` has to judge a label collision
+/// against the same text the rows would actually show.
+const SLOT_FALLBACKS: [&str; 3] = ["Session", "Weekly", "Monthly"];
+
 /// Gap between the major blocks of a provider's tab (header, each rate limit
 /// window, cost). The macOS app leans on whitespace to separate these.
 const BLOCK_SPACING: u16 = 14;
@@ -356,13 +362,15 @@ impl Window {
             .width(Length::Fill);
         let mut any = false;
         if let Some(usage) = &payload.usage {
-            for (window, fallback) in [
-                (usage.primary.as_ref(), "Session"),
-                (usage.secondary.as_ref(), "Weekly"),
+            let [primary_label, secondary_label, _] = usage.window_label_overrides(SLOT_FALLBACKS);
+            for (window, label, fallback) in [
+                (usage.primary.as_ref(), primary_label, "Session"),
+                (usage.secondary.as_ref(), secondary_label, "Weekly"),
             ] {
                 let Some(window) = window else { continue };
                 any = true;
-                bars = bars.push(self.summary_window(window, fallback));
+                let label = label.unwrap_or_else(|| window.window_label(fallback));
+                bars = bars.push(self.summary_window(window, label));
             }
         }
 
@@ -380,7 +388,7 @@ impl Window {
     fn summary_window<'a>(
         &'a self,
         window: &'a RateLimitWindow,
-        fallback: &str,
+        label: String,
     ) -> Element<'a, Message> {
         widget::Column::new()
             .spacing(2)
@@ -390,7 +398,7 @@ impl Window {
             ))
             .push(split_row(
                 widget::text::body(self.percent_text(window)),
-                widget::text::caption(window.window_label(fallback)),
+                widget::text::caption(label),
             ))
             .into()
     }
@@ -434,21 +442,26 @@ impl Window {
         column = column.push(header);
 
         let pace = payload.pace.as_ref();
+        let [primary_label, secondary_label, tertiary_label] =
+            usage.window_label_overrides(SLOT_FALLBACKS);
         let windows = [
             (
                 usage.primary.as_ref(),
+                primary_label,
                 "Session",
                 self.config.show_session,
                 pace.and_then(|p| p.primary.as_ref()),
             ),
             (
                 usage.secondary.as_ref(),
+                secondary_label,
                 "Weekly",
                 self.config.show_weekly,
                 pace.and_then(|p| p.secondary.as_ref()),
             ),
             (
                 usage.tertiary.as_ref(),
+                tertiary_label,
                 "Monthly",
                 self.config.show_monthly,
                 pace.and_then(|p| p.tertiary.as_ref()),
@@ -461,11 +474,12 @@ impl Window {
         // provider does not report (Codex frequently has no session window) is
         // simply skipped, never drawn as an empty placeholder.
         let mut any = false;
-        for (window, fallback, show, pace) in windows {
+        for (window, label, fallback, show, pace) in windows {
             let Some(window) = window else { continue };
             any = true;
             if show {
-                column = column.push(self.window_block(window, pace, fallback, now));
+                let label = label.unwrap_or_else(|| window.window_label(fallback));
+                column = column.push(self.window_block(window, pace, label, now));
             }
         }
 
@@ -509,7 +523,7 @@ impl Window {
         &'a self,
         window: &'a RateLimitWindow,
         pace: Option<&'a PaceWindow>,
-        fallback: &str,
+        label: String,
         now: DateTime<Utc>,
     ) -> Element<'a, Message> {
         let reset = if self.config.show_reset_countdown {
@@ -522,7 +536,7 @@ impl Window {
             .spacing(6)
             .width(Length::Fill)
             .push(split_row(
-                widget::text::heading(window.window_label(fallback)),
+                widget::text::heading(label),
                 widget::text::caption(reset.unwrap_or_default()),
             ))
             .push(widget::determinate_linear(
