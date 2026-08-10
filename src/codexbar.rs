@@ -325,6 +325,22 @@ fn duration_text(seconds: u64) -> String {
 }
 
 impl ProviderPayload {
+    /// The plan to show beside the snapshot age, where the provider reports one
+    /// worth trusting.
+    ///
+    /// Claude's is dropped. On Linux its usage comes from driving the `claude`
+    /// CLI in a pseudo-terminal and scraping the redrawing screen, and whatever
+    /// followed "Login method:" is passed through unchanged when it matches no
+    /// known plan. A capture caught mid-repaint therefore leaves a bare number
+    /// that changes between refreshes - "21", then "25" - which reads as a
+    /// fault in this applet rather than in the data it was handed.
+    pub fn plan_label(&self) -> Option<String> {
+        if self.provider.eq_ignore_ascii_case("claude") {
+            return None;
+        }
+        self.usage.as_ref()?.plan_label()
+    }
+
     /// Human readable provider name. CodexBar's JSON only carries the provider
     /// id, so the display label is derived here.
     pub fn label(&self) -> String {
@@ -1537,6 +1553,25 @@ mod tests {
         );
         // Claude's identity carries no loginMethod.
         assert!(payloads[1].usage.as_ref().unwrap().plan_label().is_none());
+    }
+
+    /// Claude's plan label is dropped whatever it says, and every other
+    /// provider's is left alone.
+    #[test]
+    fn claude_reports_no_plan_label() {
+        let scraped = r#"[{"provider": "claude", "source": "claude", "usage": {
+            "loginMethod": "25",
+            "identity": {"loginMethod": "25", "providerID": "claude"},
+            "primary": {"usedPercent": 34, "windowMinutes": 300, "resetsAt": "2026-08-10T09:50:00Z"},
+            "secondary": null, "tertiary": null,
+            "updatedAt": "2026-08-10T08:31:55Z"}},
+            {"provider": "codex", "usage": {"identity": {"loginMethod": "plus"}}}]"#;
+        let payloads = parse_usage_json(scraped).expect("parses");
+        assert!(payloads[0].plan_label().is_none());
+        assert_eq!(payloads[1].plan_label().as_deref(), Some("Plus"));
+        // Dropping the label leaves the windows beside it alone.
+        let usage = payloads[0].usage.as_ref().unwrap();
+        assert_eq!(usage.primary.as_ref().unwrap().window_label("Primary"), "Session");
     }
 
     #[test]

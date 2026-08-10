@@ -437,7 +437,7 @@ impl Window {
 
         header = header.push(split_row(
             widget::text::caption(usage.updated_text(now).unwrap_or_default()),
-            widget::text::caption(usage.plan_label().unwrap_or_default()),
+            widget::text::caption(payload.plan_label().unwrap_or_default()),
         ));
         column = column.push(header);
 
