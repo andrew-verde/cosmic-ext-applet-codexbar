@@ -1,6 +1,6 @@
 //! User configuration, read from
-//! `$XDG_CONFIG_HOME/codexbar-cosmic-applet/config.toml` (in practice
-//! `~/.config/codexbar-cosmic-applet/config.toml`).
+//! `$XDG_CONFIG_HOME/cosmic-ext-applet-codexbar/config.toml` (in practice
+//! `~/.config/cosmic-ext-applet-codexbar/config.toml`).
 //!
 //! The file is optional: every field has a built-in default that reproduces the
 //! applet's out-of-the-box appearance, so a missing or unreadable file is not an
@@ -16,14 +16,14 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Deserializer};
 
 /// Directory under `$XDG_CONFIG_HOME` holding `config.toml`.
-const CONFIG_DIR: &str = "codexbar-cosmic-applet";
+const CONFIG_DIR: &str = "cosmic-ext-applet-codexbar";
 
 /// The file written on first run. Every field is present at its default value,
 /// so this is also a faithful description of the built-in defaults.
 pub const DEFAULT_CONFIG_TOML: &str = r#"# Configuration for the CodexBar COSMIC panel applet.
 #
-# Location: ~/.config/codexbar-cosmic-applet/config.toml
-#           ($XDG_CONFIG_HOME/codexbar-cosmic-applet/config.toml)
+# Location: ~/.config/cosmic-ext-applet-codexbar/config.toml
+#           ($XDG_CONFIG_HOME/cosmic-ext-applet-codexbar/config.toml)
 #
 # This file is re-read on every refresh, so edits apply within about 60 seconds
 # with no need to restart the applet or the panel. Deleting the file restores
@@ -376,7 +376,7 @@ mod tests {
     }
 
     /// A private scratch directory, so these tests never touch the real
-    /// `~/.config/codexbar-cosmic-applet`.
+    /// `~/.config/cosmic-ext-applet-codexbar`.
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("codexbar-applet-test-{name}"));
         let _ = std::fs::remove_dir_all(&dir);

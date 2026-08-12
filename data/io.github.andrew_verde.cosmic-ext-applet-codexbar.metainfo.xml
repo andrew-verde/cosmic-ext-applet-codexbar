@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.andrew_verde.codexbar-cosmic-applet</id>
+  <id>io.github.andrew_verde.cosmic-ext-applet-codexbar</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <project_group>COSMIC</project_group>
   <name>CodexBar</name>
-  <summary>Agent usage limits in the COSMIC panel</summary>
+  <summary>Agent usage limits for the COSMIC™ desktop</summary>
 
   <developer id="io.github.andrew_verde">
     <name>Andrew Green</name>
@@ -13,8 +13,9 @@
 
   <description>
     <p>
-      A native COSMIC panel applet that shows how much of your AI coding agent
-      usage limits you have left, in the spirit of the macOS app CodexBar.
+      A panel applet for the COSMIC™ desktop that shows how much of your AI
+      coding agent usage limits you have left, in the spirit of the macOS app
+      CodexBar. This is a third-party applet, not official COSMIC software.
     </p>
     <p>
       Clicking the panel icon opens a popup with a tab per provider, plus an
@@ -34,27 +35,27 @@
     </p>
   </description>
 
-  <launchable type="desktop-id">io.github.andrew_verde.codexbar-cosmic-applet.desktop</launchable>
-  <icon type="stock">io.github.andrew_verde.codexbar-cosmic-applet</icon>
+  <launchable type="desktop-id">io.github.andrew_verde.cosmic-ext-applet-codexbar.desktop</launchable>
+  <icon type="stock">io.github.andrew_verde.cosmic-ext-applet-codexbar</icon>
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/andrew-verde/codexbar-cosmic-applet/main/docs/screenshot.png</image>
+      <image>https://raw.githubusercontent.com/andrew-verde/cosmic-ext-applet-codexbar/main/docs/screenshot.png</image>
       <caption>The popup's Claude tab, with session and weekly usage, pace projection and cost stats</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/andrew-verde/codexbar-cosmic-applet/main/docs/screenshot-overview.png</image>
+      <image>https://raw.githubusercontent.com/andrew-verde/cosmic-ext-applet-codexbar/main/docs/screenshot-overview.png</image>
       <caption>The Overview tab, condensing every provider's windows to one line each</caption>
     </screenshot>
   </screenshots>
 
-  <url type="homepage">https://github.com/andrew-verde/codexbar-cosmic-applet</url>
-  <url type="bugtracker">https://github.com/andrew-verde/codexbar-cosmic-applet/issues</url>
-  <url type="vcs-browser">https://github.com/andrew-verde/codexbar-cosmic-applet</url>
+  <url type="homepage">https://github.com/andrew-verde/cosmic-ext-applet-codexbar</url>
+  <url type="bugtracker">https://github.com/andrew-verde/cosmic-ext-applet-codexbar/issues</url>
+  <url type="vcs-browser">https://github.com/andrew-verde/cosmic-ext-applet-codexbar</url>
 
   <provides>
     <id>com.system76.CosmicApplet</id>
-    <binary>codexbar-cosmic-applet</binary>
+    <binary>cosmic-ext-applet-codexbar</binary>
   </provides>
 
   <categories>

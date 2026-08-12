@@ -17,8 +17,8 @@ import json
 import sys
 from pathlib import Path
 
-APP_ID = "io.github.andrew_verde.codexbar-cosmic-applet"
-REPO_URL = "https://github.com/andrew-verde/codexbar-cosmic-applet.git"
+APP_ID = "io.github.andrew_verde.cosmic-ext-applet-codexbar"
+REPO_URL = "https://github.com/andrew-verde/cosmic-ext-applet-codexbar.git"
 
 
 def swap_source(manifest: dict, tag: str, commit: str) -> None:

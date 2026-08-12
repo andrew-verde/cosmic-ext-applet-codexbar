@@ -1,3 +1,3 @@
 fn main() -> cosmic::iced::Result {
-    codexbar_cosmic_applet::run()
+    cosmic_ext_applet_codexbar::run()
 }

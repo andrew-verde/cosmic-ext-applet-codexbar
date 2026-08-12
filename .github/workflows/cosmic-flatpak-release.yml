@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 env:
-  APP_ID: io.github.andrew_verde.codexbar-cosmic-applet
+  APP_ID: io.github.andrew_verde.cosmic-ext-applet-codexbar
   FORK: andrew-verde/cosmic-flatpak
   UPSTREAM: pop-os/cosmic-flatpak
 
@@ -113,6 +113,18 @@ jobs:
           cd /tmp/cosmic-flatpak
           git checkout -b "${branch}"
 
+          # A submission that creates the app directory is an add, not an
+          # update, and cosmic-flatpak titles the two differently. Decided from
+          # what is actually in master rather than from a hardcoded word, so
+          # this stays right for every release after the first one.
+          if [ -d "app/${APP_ID}" ]; then
+            summary="${APP_ID}: update to ${TAG}"
+            verb="Updates"
+          else
+            summary="Add ${APP_ID}"
+            verb="Adds"
+          fi
+
           mkdir -p "app/${APP_ID}"
           cp "/tmp/${APP_ID}.json" "app/${APP_ID}/${APP_ID}.json"
           cp /tmp/cargo-sources.json "app/${APP_ID}/cargo-sources.json"
@@ -127,20 +139,20 @@ jobs:
             echo "Nothing changed - ${TAG} is already what is published."
             exit 0
           fi
-          git commit -m "Update codexbar-cosmic-applet to ${TAG}"
+          git commit -m "${summary}"
 
           git push --force \
             "https://x-access-token:${GH_TOKEN}@github.com/${FORK}.git" \
             "HEAD:${branch}"
 
           cat > /tmp/pr-body.md <<EOF
-          Updates \`${APP_ID}\` to ${TAG}.
+          ${verb} \`${APP_ID}\` at ${TAG}.
 
-          - Pinned to [\`${SHA}\`](https://github.com/andrew-verde/codexbar-cosmic-applet/commit/${SHA}) (tag \`${TAG}\`)
+          - Pinned to [\`${SHA}\`](https://github.com/andrew-verde/cosmic-ext-applet-codexbar/commit/${SHA}) (tag \`${TAG}\`)
           - \`cargo-sources.json\` regenerated from that tag's \`Cargo.lock\`
-          - Release notes: https://github.com/andrew-verde/codexbar-cosmic-applet/releases/tag/${TAG}
+          - Release notes: https://github.com/andrew-verde/cosmic-ext-applet-codexbar/releases/tag/${TAG}
 
-          Opened automatically by [\`cosmic-flatpak-release.yml\`](https://github.com/andrew-verde/codexbar-cosmic-applet/blob/main/.github/workflows/cosmic-flatpak-release.yml).
+          Opened automatically by [\`cosmic-flatpak-release.yml\`](https://github.com/andrew-verde/cosmic-ext-applet-codexbar/blob/main/.github/workflows/cosmic-flatpak-release.yml).
           EOF
 
           # Re-running a tag force-pushes the same branch, so there may already
@@ -153,7 +165,7 @@ jobs:
 
           if [ -n "${existing}" ]; then
             gh pr edit "${existing}" \
-              --title "Update codexbar-cosmic-applet to ${TAG}" \
+              --title "${summary}" \
               --body-file /tmp/pr-body.md
             echo "Updated ${existing}"
           else
@@ -161,6 +173,6 @@ jobs:
               --repo "${UPSTREAM}" \
               --base master \
               --head "${FORK%%/*}:${branch}" \
-              --title "Update codexbar-cosmic-applet to ${TAG}" \
+              --title "${summary}" \
               --body-file /tmp/pr-body.md
           fi

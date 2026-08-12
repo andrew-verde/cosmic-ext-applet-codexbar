@@ -1,8 +1,11 @@
-# codexbar-cosmic-applet
+# cosmic-ext-applet-codexbar
 
-A native [COSMIC](https://github.com/pop-os/cosmic-epoch) panel applet that shows
-your agent usage limits, in the spirit of the macOS app
+A panel applet for the [COSMIC™](https://github.com/pop-os/cosmic-epoch) desktop
+that shows your agent usage limits, in the spirit of the macOS app
 [CodexBar](https://github.com/steipete/CodexBar).
+
+This is a third-party applet. It is not official COSMIC software and is not
+endorsed by System76.
 
 ![Screenshot of the applet's popup, showing the Claude tab with session and weekly usage, pace projection, and cost/token stats](docs/screenshot.png)
 
@@ -69,8 +72,8 @@ block. A failing `cost` call never blanks the usage display.
 ## Build and install
 
 ```sh
-git clone https://github.com/andrew-verde/codexbar-cosmic-applet.git
-cd codexbar-cosmic-applet
+git clone https://github.com/andrew-verde/cosmic-ext-applet-codexbar.git
+cd cosmic-ext-applet-codexbar
 just build-release
 sudo just install
 ```
@@ -79,11 +82,11 @@ sudo just install
 
 | file | destination |
 | --- | --- |
-| `codexbar-cosmic-applet` | `/usr/bin/` |
-| `io.github.andrew_verde.codexbar-cosmic-applet.desktop` | `/usr/share/applications/` |
-| `io.github.andrew_verde.codexbar-cosmic-applet-symbolic.svg` | `/usr/share/icons/hicolor/scalable/apps/` |
-| `io.github.andrew_verde.codexbar-cosmic-applet.svg` | `/usr/share/icons/hicolor/scalable/apps/` |
-| `io.github.andrew_verde.codexbar-cosmic-applet.metainfo.xml` | `/usr/share/metainfo/` |
+| `cosmic-ext-applet-codexbar` | `/usr/bin/` |
+| `io.github.andrew_verde.cosmic-ext-applet-codexbar.desktop` | `/usr/share/applications/` |
+| `io.github.andrew_verde.cosmic-ext-applet-codexbar-symbolic.svg` | `/usr/share/icons/hicolor/scalable/apps/` |
+| `io.github.andrew_verde.cosmic-ext-applet-codexbar.svg` | `/usr/share/icons/hicolor/scalable/apps/` |
+| `io.github.andrew_verde.cosmic-ext-applet-codexbar.metainfo.xml` | `/usr/share/metainfo/` |
 
 To install somewhere else, override `prefix` or `rootdir`, e.g.
 `just prefix=$HOME/.local install` (COSMIC also reads applets from
@@ -93,7 +96,7 @@ Remove it again with `sudo just uninstall`. Run the unit tests with `just test`.
 
 ### Flatpak
 
-`flatpak/io.github.andrew_verde.codexbar-cosmic-applet.json` builds the applet as
+`flatpak/io.github.andrew_verde.cosmic-ext-applet-codexbar.json` builds the applet as
 a Flatpak:
 
 ```sh
@@ -106,7 +109,7 @@ flatpak run --filesystem=host --share=network \
     --env=FLATPAK_USER_DIR="$HOME/.local/share/flatpak" \
     --command=flatpak-builder org.flatpak.Builder \
     --user --force-clean --install \
-    build io.github.andrew_verde.codexbar-cosmic-applet.json
+    build io.github.andrew_verde.cosmic-ext-applet-codexbar.json
 ```
 
 `FLATPAK_USER_DIR` is needed because `org.flatpak.Builder` redirects
@@ -125,7 +128,7 @@ flatpak run --filesystem=host --command=flatpak-cargo-generator \
 `codexbar` itself still has to be installed on the host, not in the sandbox -
 it holds your provider credentials in `~/.codex`, `~/.claude` and the like. The
 sandboxed applet runs it through `flatpak-spawn --host`, and reads its own
-config from the host's `~/.config/codexbar-cosmic-applet/config.toml` rather
+config from the host's `~/.config/cosmic-ext-applet-codexbar/config.toml` rather
 than the per-app directory Flatpak would otherwise point it at.
 
 One trap when building locally with the `org.flatpak.Builder` flatpak rather
@@ -140,7 +143,7 @@ in place, keeping the file where flatpak put it:
 
 ```sh
 sed -i 's|^Exec=/app/bin/flatpak |Exec=/usr/bin/flatpak |' \
-    ~/.local/share/flatpak/exports/share/applications/io.github.andrew_verde.codexbar-cosmic-applet.desktop
+    ~/.local/share/flatpak/exports/share/applications/io.github.andrew_verde.cosmic-ext-applet-codexbar.desktop
 ```
 
 Builds made with a native `flatpak-builder`, including the ones published to
@@ -166,10 +169,10 @@ Remove the applet in **Settings → Desktop → Panel** and add it again.
 The applet reads an optional TOML file from
 
 ```
-~/.config/codexbar-cosmic-applet/config.toml
+~/.config/cosmic-ext-applet-codexbar/config.toml
 ```
 
-(strictly `$XDG_CONFIG_HOME/codexbar-cosmic-applet/config.toml`). A commented
+(strictly `$XDG_CONFIG_HOME/cosmic-ext-applet-codexbar/config.toml`). A commented
 copy is written out the first time the applet runs, and re-read on every
 refresh — edits apply within about 60 seconds, with no need to restart the
 applet or the panel. If the file is missing or malformed the applet falls back

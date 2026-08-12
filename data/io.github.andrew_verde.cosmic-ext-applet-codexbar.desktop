@@ -1,12 +1,12 @@
 [Desktop Entry]
 Name=CodexBar
-Comment=Codex and Claude Code usage limits in the COSMIC panel
+Comment=Codex and Claude Code usage limits for the COSMIC™ desktop
 Type=Application
-Exec=codexbar-cosmic-applet
+Exec=cosmic-ext-applet-codexbar
 Terminal=false
 Categories=Cosmic;Iced;
 Keywords=Cosmic;Iced;Codex;Claude;Usage;
-Icon=io.github.andrew_verde.codexbar-cosmic-applet-symbolic
+Icon=io.github.andrew_verde.cosmic-ext-applet-codexbar-symbolic
 StartupNotify=true
 NoDisplay=true
 X-CosmicApplet=true

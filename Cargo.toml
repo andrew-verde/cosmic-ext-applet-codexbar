@@ -1,10 +1,10 @@
 [package]
-name = "codexbar-cosmic-applet"
+name = "cosmic-ext-applet-codexbar"
 version = "0.1.0"
 edition = "2024"
-description = "COSMIC panel applet showing Codex / Claude Code usage limits"
+description = "Panel applet for the COSMIC™ desktop showing Codex / Claude Code usage limits"
 license = "MIT"
-repository = "https://github.com/andrew-verde/codexbar-cosmic-applet"
+repository = "https://github.com/andrew-verde/cosmic-ext-applet-codexbar"
 readme = "README.md"
 
 [profile.release]

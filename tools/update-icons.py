@@ -42,7 +42,7 @@ END = "// END GENERATED ICON TABLE"
 
 def fetch(url):
     """GET `url`, authenticating when a token is in the environment."""
-    request = urllib.request.Request(url, headers={"User-Agent": "codexbar-cosmic-applet"})
+    request = urllib.request.Request(url, headers={"User-Agent": "cosmic-ext-applet-codexbar"})
     token = os.environ.get("GITHUB_TOKEN")
     if token:
         request.add_header("Authorization", f"Bearer {token}")
