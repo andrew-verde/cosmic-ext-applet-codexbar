@@ -20,7 +20,7 @@ const CONFIG_DIR: &str = "cosmic-ext-applet-codexbar";
 
 /// The file written on first run. Every field is present at its default value,
 /// so this is also a faithful description of the built-in defaults.
-pub const DEFAULT_CONFIG_TOML: &str = r#"# Configuration for the CodexBar COSMIC panel applet.
+pub const DEFAULT_CONFIG_TOML: &str = r#"# Configuration for the CodexBar panel applet for the COSMIC™ desktop.
 #
 # Location: ~/.config/cosmic-ext-applet-codexbar/config.toml
 #           ($XDG_CONFIG_HOME/cosmic-ext-applet-codexbar/config.toml)

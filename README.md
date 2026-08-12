@@ -276,3 +276,10 @@ it is identified in both the source and `THIRD_PARTY_LICENSES.md`.
 
 The Overview tab's icon is original artwork bundled with the applet, so it looks
 the same under every icon theme.
+
+## Trademarks
+
+COSMIC™ is a trademark of System76, Inc. This applet is a third-party project
+that integrates with the COSMIC desktop. It is not official COSMIC software and
+is neither affiliated with nor endorsed by System76. See the
+[COSMIC trademark policy](https://github.com/pop-os/cosmic-epoch/blob/master/TRADEMARK.md).
