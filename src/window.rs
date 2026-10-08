@@ -51,12 +51,6 @@ const HEADER_ICON_SIZE: u16 = 24;
 /// beyond this crate's.
 const OVERVIEW_ICON: &[u8] = include_bytes!("../data/icons/overview-symbolic.svg");
 
-/// Labels for the primary/secondary/tertiary windows when the provider reports
-/// no window length to derive one from. Named here because both tabs use them
-/// and `UsageSnapshot::window_label_overrides` has to judge a label collision
-/// against the same text the rows would actually show.
-const SLOT_FALLBACKS: [&str; 3] = ["Session", "Weekly", "Monthly"];
-
 /// Gap between the major blocks of a provider's tab (header, each rate limit
 /// window, cost). The macOS app leans on whitespace to separate these.
 const BLOCK_SPACING: u16 = 14;
@@ -87,7 +81,7 @@ pub enum Message {
 /// Which page of the popup is showing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tab {
-    /// One condensed line per provider.
+    /// Accounts grouped under each provider.
     Overview,
     /// The full layout for a single provider, keyed by provider id.
     Provider(String),
@@ -229,24 +223,27 @@ impl Application for Window {
                 .push(widget::text::body(
                     "Enable one with `codexbar config enable --provider <id>`.",
                 )),
-            State::Loaded(payloads) => match &self.tab {
-                Tab::Provider(provider) => {
-                    match payloads.iter().find(|p| &p.provider == provider) {
-                        Some(payload) => widget::Column::new()
-                            .push(self.provider_detail(payload))
-                            .spacing(12),
-                        None => widget::Column::new()
-                            .push(widget::text::body("This provider is no longer reported.")),
+            State::Loaded(payloads) => {
+                let groups = group_providers(payloads);
+                match &self.tab {
+                    Tab::Provider(provider) => {
+                        match groups.iter().find(|group| group.provider == provider) {
+                            Some(group) => {
+                                widget::Column::new().push(self.provider_detail(&group.accounts))
+                            }
+                            None => widget::Column::new()
+                                .push(widget::text::body("This provider is no longer reported.")),
+                        }
+                    }
+                    Tab::Overview => {
+                        let mut column = widget::Column::new().spacing(BLOCK_SPACING);
+                        for group in &groups {
+                            column = column.push(self.provider_summary(&group.accounts));
+                        }
+                        column
                     }
                 }
-                Tab::Overview => {
-                    let mut column = widget::Column::new().spacing(12);
-                    for payload in payloads {
-                        column = column.push(self.provider_summary(payload));
-                    }
-                    column
-                }
-            },
+            }
         };
 
         // The tab strip stays put while only the body scrolls, and the body is
@@ -292,7 +289,8 @@ impl Window {
             Some(widget::icon::from_svg_bytes(OVERVIEW_ICON).symbolic(true)),
             Tab::Overview,
         ));
-        for payload in payloads {
+        for group in group_providers(payloads) {
+            let payload = group.accounts[0];
             row = row.push(self.tab_button(
                 payload.label(),
                 provider_glyph(&payload.provider),
@@ -330,14 +328,71 @@ impl Window {
             .into()
     }
 
-    /// One condensed line per provider for the Overview tab: enough to scan
-    /// many providers at once without the full per-window layout.
-    fn provider_summary<'a>(&'a self, payload: &'a ProviderPayload) -> Element<'a, Message> {
+    /// Overview groups all account summaries beneath one provider heading.
+    fn provider_summary<'a>(&'a self, accounts: &[&'a ProviderPayload]) -> Element<'a, Message> {
+        let grouped = accounts.len() > 1;
+        let mut column = widget::Column::new()
+            .spacing(SUMMARY_HEADER_SPACING)
+            .width(Length::Fill);
+        if grouped {
+            column = column.push(provider_heading(accounts[0]));
+        }
+        for (index, &payload) in accounts.iter().enumerate() {
+            let name = if grouped {
+                account_label(payload, index, &self.config)
+            } else {
+                payload.label()
+            };
+            column = column.push(self.account_summary(payload, name, grouped));
+        }
+        column.into()
+    }
+
+    /// One provider tab, with independent account sections and one local cost block.
+    fn provider_detail<'a>(&'a self, accounts: &[&'a ProviderPayload]) -> Element<'a, Message> {
+        let grouped = accounts.len() > 1;
+        let mut column = widget::Column::new()
+            .spacing(BLOCK_SPACING)
+            .width(Length::Fill);
+        if grouped {
+            column = column.push(provider_heading(accounts[0]));
+        }
+        for (index, &payload) in accounts.iter().enumerate() {
+            if index > 0 {
+                column = column.push(widget::divider::horizontal::default());
+            }
+            let name = if grouped {
+                account_label(payload, index, &self.config)
+            } else {
+                payload.label()
+            };
+            column = column.push(self.account_detail(payload, name, grouped));
+        }
+        if self.config.show_cost
+            && let Some(cost) = self.cost_for(&accounts[0].provider)
+        {
+            if grouped {
+                column = column.push(widget::divider::horizontal::default()).push(
+                    widget::text::caption(format!("{} cost on this machine", accounts[0].label())),
+                );
+            }
+            column = column.push(cost_block(cost));
+        }
+        column.into()
+    }
+
+    /// One account summary, including its own failure when fetching it failed.
+    fn account_summary<'a>(
+        &'a self,
+        payload: &'a ProviderPayload,
+        name: String,
+        grouped: bool,
+    ) -> Element<'a, Message> {
         let mut title = widget::Row::new().spacing(8).align_y(Vertical::Center);
-        if let Some(icon) = provider_glyph(&payload.provider) {
+        if !grouped && let Some(icon) = provider_glyph(&payload.provider) {
             title = title.push(glyph(icon, HEADER_ICON_SIZE));
         }
-        title = title.push(widget::text::title3(payload.label()));
+        title = title.push(widget::text::title3(name));
 
         // Spacing here is deliberately uneven: the account line belongs to the
         // header, so the bars below it get a wider gap, while the bars
@@ -362,14 +417,16 @@ impl Window {
             .width(Length::Fill);
         let mut any = false;
         if let Some(usage) = &payload.usage {
-            let [primary_label, secondary_label, _] = usage.window_label_overrides(SLOT_FALLBACKS);
+            let [primary_label, secondary_label, _] = payload.window_labels();
             for (window, label, fallback) in [
                 (usage.primary.as_ref(), primary_label, "Session"),
                 (usage.secondary.as_ref(), secondary_label, "Weekly"),
             ] {
                 let Some(window) = window else { continue };
                 any = true;
-                let label = label.unwrap_or_else(|| window.window_label(fallback));
+                let label = label
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| window.window_label(fallback));
                 bars = bars.push(self.summary_window(window, label));
             }
         }
@@ -403,14 +460,19 @@ impl Window {
             .into()
     }
 
-    /// The full macOS-style layout for one provider.
-    fn provider_detail<'a>(&'a self, payload: &'a ProviderPayload) -> Element<'a, Message> {
+    /// Usage, pace and credits for one account.
+    fn account_detail<'a>(
+        &'a self,
+        payload: &'a ProviderPayload,
+        name: String,
+        grouped: bool,
+    ) -> Element<'a, Message> {
         let now = Utc::now();
         let mut title = widget::Row::new().spacing(8).align_y(Vertical::Center);
-        if let Some(icon) = provider_glyph(&payload.provider) {
+        if !grouped && let Some(icon) = provider_glyph(&payload.provider) {
             title = title.push(glyph(icon, HEADER_ICON_SIZE));
         }
-        title = title.push(widget::text::title3(payload.label()));
+        title = title.push(widget::text::title3(name));
 
         // The header's two rows belong together, so they are their own column;
         // the outer spacing is what separates the major blocks.
@@ -442,8 +504,7 @@ impl Window {
         column = column.push(header);
 
         let pace = payload.pace.as_ref();
-        let [primary_label, secondary_label, tertiary_label] =
-            usage.window_label_overrides(SLOT_FALLBACKS);
+        let [primary_label, secondary_label, tertiary_label] = payload.window_labels();
         let windows = [
             (
                 usage.primary.as_ref(),
@@ -478,7 +539,9 @@ impl Window {
             let Some(window) = window else { continue };
             any = true;
             if show {
-                let label = label.unwrap_or_else(|| window.window_label(fallback));
+                let label = label
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| window.window_label(fallback));
                 column = column.push(self.window_block(window, pace, label, now));
             }
         }
@@ -493,12 +556,6 @@ impl Window {
             && let Some(text) = usage.reset_credits_text(now)
         {
             column = column.push(widget::text::caption(text).width(Length::Fill));
-        }
-
-        if self.config.show_cost
-            && let Some(cost) = self.cost_for(&payload.provider)
-        {
-            column = column.push(cost_block(cost));
         }
 
         if self.config.show_credits
@@ -728,6 +785,63 @@ fn pace_line(pace: &PaceWindow) -> String {
     parts.join(" - ")
 }
 
+struct ProviderGroup<'a> {
+    provider: &'a str,
+    accounts: Vec<&'a ProviderPayload>,
+}
+
+/// Preserve provider and account order even if payloads are interleaved.
+fn group_providers(payloads: &[ProviderPayload]) -> Vec<ProviderGroup<'_>> {
+    let mut groups: Vec<ProviderGroup<'_>> = Vec::new();
+    for payload in payloads {
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| group.provider == payload.provider)
+        {
+            group.accounts.push(payload);
+        } else {
+            groups.push(ProviderGroup {
+                provider: &payload.provider,
+                accounts: vec![payload],
+            });
+        }
+    }
+    groups
+}
+
+fn provider_heading<'a>(payload: &ProviderPayload) -> Element<'a, Message> {
+    let mut title = widget::Row::new().spacing(8).align_y(Vertical::Center);
+    if let Some(icon) = provider_glyph(&payload.provider) {
+        title = title.push(glyph(icon, HEADER_ICON_SIZE));
+    }
+    title.push(widget::text::title3(payload.label())).into()
+}
+
+/// User names take precedence over non-email CLI labels. Numbered fallbacks
+/// distinguish accounts while keeping emails hidden when show_account is off.
+fn account_label(payload: &ProviderPayload, index: usize, config: &Config) -> String {
+    payload
+        .account_text()
+        .and_then(|account| config.account_labels.get(account))
+        .or_else(|| {
+            payload
+                .account
+                .as_ref()
+                .and_then(|account| config.account_labels.get(account))
+        })
+        .map(String::as_str)
+        .or_else(|| {
+            payload
+                .account
+                .as_deref()
+                .filter(|account| !account.contains('@'))
+        })
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("Account {}", index + 1))
+}
+
 fn account_caption<'a>(payload: &'a ProviderPayload, config: &Config) -> Element<'a, Message> {
     let account = match (config.show_account, payload.account_text()) {
         (true, Some(account)) => account.to_string(),
@@ -776,6 +890,60 @@ mod tests {
     use cosmic::iced::Pixels;
     use cosmic::iced::advanced::layout::{Limits, Node};
     use cosmic::iced::advanced::widget::Tree;
+
+    #[test]
+    fn groups_interleaved_accounts_in_provider_order() {
+        let payloads = crate::codexbar::parse_usage_json(
+            r#"[
+            {"provider":"codex","account":"personal@example.com"},
+            {"provider":"claude"},
+            {"provider":"codex","account":"team@example.com"},
+            {"provider":"antigravity"}
+        ]"#,
+        )
+        .unwrap();
+        let groups = group_providers(&payloads);
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.provider)
+                .collect::<Vec<_>>(),
+            ["codex", "claude", "antigravity"]
+        );
+        assert_eq!(
+            groups[0]
+                .accounts
+                .iter()
+                .map(|p| p.account_text())
+                .collect::<Vec<_>>(),
+            [Some("personal@example.com"), Some("team@example.com")]
+        );
+    }
+
+    #[test]
+    fn uses_configured_account_names_without_exposing_email_in_fallbacks() {
+        let payloads = crate::codexbar::parse_usage_json(r#"[
+            {"provider":"codex","account":"team@example.com","usage":{"identity":{"accountEmail":"identity@example.com"}}},
+            {"provider":"claude","account":"Work"},
+            {"provider":"codex","account":"personal@example.com"}
+        ]"#).unwrap();
+        let config = crate::config::parse_config(
+            r#"
+            show_account = false
+            account_labels = { "identity@example.com" = "Virufy" }
+        "#,
+        )
+        .unwrap();
+        assert_eq!(account_label(&payloads[0], 0, &config), "Virufy");
+        assert_eq!(account_label(&payloads[1], 1, &config), "Work");
+        assert_eq!(account_label(&payloads[2], 2, &config), "Account 3");
+        assert_eq!(
+            layout(account_caption(&payloads[0], &config), f32::INFINITY)
+                .size()
+                .width,
+            0.0
+        );
+    }
 
     /// A real `cosmic::Renderer`, built without a GPU or a compositor so the
     /// layout pass below measures text with the same font machinery the applet
@@ -833,8 +1001,15 @@ mod tests {
         popup - f32::from(cosmic::theme::spacing().space_m) * 2.0 - SCROLLBAR_GUTTER
     }
 
-    /// Every window title the applet can put in the left cell, longest first.
-    const TITLES: [&str; 4] = ["Monthly", "Session", "Weekly", "Tertiary"];
+    /// Common CLI labels and slot fallbacks, including Antigravity's pools.
+    const TITLES: [&str; 6] = [
+        "Gemini Models",
+        "Claude and GPT",
+        "Monthly",
+        "Session",
+        "Weekly",
+        "Tertiary",
+    ];
 
     /// Every reset string `RateLimitWindow::reset_text` can produce, worst case.
     /// It counts down from `resetsAt`, so these are short and bounded; the last

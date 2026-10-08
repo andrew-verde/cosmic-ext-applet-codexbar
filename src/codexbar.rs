@@ -29,9 +29,9 @@
 //! Swift's `JSONEncoder` is used with `.iso8601` date encoding, so every date is
 //! an RFC 3339 string. Keys are the Swift property names, i.e. lowerCamelCase.
 //!
-//! Everything here is decoded defensively: every field is optional and unknown
-//! fields are ignored, so a CodexBar release that adds or drops keys degrades
-//! gracefully instead of blanking the applet. If a field name turns out to be
+//! Display fields are optional and unknown fields are ignored, so a CodexBar
+//! release that adds or drops optional keys degrades gracefully instead of
+//! blanking the applet. If a field name turns out to be
 //! wrong, only the `serde` attributes below need adjusting.
 
 use std::io::ErrorKind;
@@ -42,8 +42,8 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 /// The CLI this applet drives. Every invocation is this name plus a fixed
-/// argument list - inside a Flatpak, wrapped in `flatpak-spawn --host` - and
-/// nothing user-supplied ever reaches a command line.
+/// argument list - inside a Flatpak, wrapped in `flatpak-spawn --host`.
+/// Provider IDs are passed as separate arguments, never through a shell.
 const PROGRAM: &str = "codexbar";
 
 /// One entry of the `codexbar usage --format json` array.
@@ -60,6 +60,8 @@ pub struct ProviderPayload {
     pub source: Option<String>,
     #[serde(default)]
     pub usage: Option<UsageSnapshot>,
+    #[serde(default)]
+    pub rate_window_labels: Option<RateWindowLabels>,
     #[serde(default)]
     pub credits: Option<CreditsSnapshot>,
     /// CodexBar's burn-rate projection, keyed by the same window names as
@@ -88,16 +90,10 @@ pub struct UsageSnapshot {
     pub identity: Option<Identity>,
     #[serde(default)]
     pub codex_reset_credits: Option<CodexResetCredits>,
-    /// Extra windows the provider reports beside the three numbered slots.
-    /// Only their titles are read, never their numbers - see
-    /// [`UsageSnapshot::window_label_overrides`]. Providers that report none
-    /// simply have an empty list.
-    #[serde(default)]
-    pub extra_rate_windows: Vec<ExtraRateWindow>,
 }
 
-/// Who the numbers belong to. This, not the top-level `ProviderPayload::account`,
-/// is where the live CLI reports the signed-in email.
+/// Who the numbers belong to. The signed-in email is preferred over the
+/// top-level `ProviderPayload::account`, which can be a display label.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Identity {
@@ -159,23 +155,16 @@ pub struct RateLimitWindow {
     pub reset_description: Option<String>,
 }
 
-/// One entry of `usage.extraRateWindows`: a named window sitting outside the
-/// numbered `primary`/`secondary`/`tertiary` slots.
-///
-/// These are not drawn as rows. Upstream notes that some of them carry reset
-/// metadata without a real usage figure, so rendering their `usedPercent` would
-/// invent an exhausted quota; the applet reads nothing from them but the title.
+/// Top-level `rateWindowLabels`, supplied by CodexBar's provider presentation.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ExtraRateWindow {
-    /// Display name of the pool, e.g. "Gemini weekly".
+pub struct RateWindowLabels {
     #[serde(default)]
-    pub title: Option<String>,
-    /// Stable identifier, e.g. `antigravity-quota-summary-gemini-weekly`.
+    pub primary: Option<String>,
     #[serde(default)]
-    pub id: Option<String>,
+    pub secondary: Option<String>,
     #[serde(default)]
-    pub window: Option<RateLimitWindow>,
+    pub tertiary: Option<String>,
 }
 
 /// Top-level `pace` object, mirroring [`UsageSnapshot`]'s window keys.
@@ -325,6 +314,20 @@ fn duration_text(seconds: u64) -> String {
 }
 
 impl ProviderPayload {
+    /// CLI labels in slot order. Missing or blank labels use the window-length
+    /// fallback, including when an older CLI omits `rateWindowLabels` entirely.
+    pub fn window_labels(&self) -> [Option<&str>; 3] {
+        let Some(labels) = &self.rate_window_labels else {
+            return [None, None, None];
+        };
+        [
+            labels.primary.as_deref(),
+            labels.secondary.as_deref(),
+            labels.tertiary.as_deref(),
+        ]
+        .map(|label| label.map(str::trim).filter(|label| !label.is_empty()))
+    }
+
     /// The plan to show beside the snapshot age, where the provider reports one
     /// worth trusting.
     ///
@@ -359,9 +362,8 @@ impl ProviderPayload {
 
     /// Signed-in account for this provider, usually an email address.
     ///
-    /// The live CLI reports it as `usage.identity.accountEmail`; the top-level
-    /// `account` documented in `docs/cli.md` is never populated in practice but
-    /// is still honoured as a fallback in case some provider does emit it.
+    /// Prefer `usage.identity.accountEmail`, then the top-level `account`
+    /// populated by the CLI when querying multiple accounts.
     pub fn account_text(&self) -> Option<&str> {
         self.usage
             .as_ref()
@@ -425,68 +427,6 @@ impl UsageSnapshot {
             .filter(|credit| credit.is_available(now))
             .filter_map(|credit| credit.expires_at)
             .min()
-    }
-
-    /// Replacement labels for the primary/secondary/tertiary slots, in that
-    /// order, for the case where the derived labels would not tell two windows
-    /// apart. `None` in a slot means [`RateLimitWindow::window_label`] stands.
-    ///
-    /// Antigravity is the reason this exists. It reports two separate quota
-    /// pools - Gemini, and Claude/GPT - as `primary` and `secondary`, and both
-    /// are 10080-minute windows, so both derive "Weekly" and the popup shows two
-    /// rows nothing distinguishes. The CLI does name the pools, but only in
-    /// `extraRateWindows`, whose entries line up positionally with the numbered
-    /// slots: the first extra describes `primary`, the second `secondary`.
-    ///
-    /// Only titles are borrowed, never numbers, and the extras are never drawn
-    /// as rows of their own.
-    ///
-    /// A slot is overridden only when all of the following hold, which leaves
-    /// every provider whose labels already differ - Codex and Claude report a
-    /// 300-minute session beside a weekly window - completely untouched:
-    ///
-    /// * two or more of the reported windows derive the same label, so there is
-    ///   an actual collision to resolve;
-    /// * the extra at the slot's own position exists and carries a title;
-    /// * that extra's window has the same length and reset time as the slot's,
-    ///   a shape check so an unrelated extra cannot capture a label by sitting
-    ///   in the right position.
-    ///
-    /// `fallbacks` are the labels the caller uses for windows that report no
-    /// `windowMinutes`, passed in so the collision is judged against the text
-    /// that would actually be shown.
-    pub fn window_label_overrides(&self, fallbacks: [&str; 3]) -> [Option<String>; 3] {
-        let slots = [
-            self.primary.as_ref(),
-            self.secondary.as_ref(),
-            self.tertiary.as_ref(),
-        ];
-        let labels: Vec<String> = slots
-            .iter()
-            .copied()
-            .zip(fallbacks)
-            .filter_map(|(window, fallback)| Some(window?.window_label(fallback)))
-            .collect();
-        let collides = labels
-            .iter()
-            .any(|label| labels.iter().filter(|other| *other == label).count() > 1);
-        if !collides {
-            return [None, None, None];
-        }
-
-        std::array::from_fn(|slot| {
-            let window = slots[slot]?;
-            let extra = self.extra_rate_windows.get(slot)?;
-            let title = extra.title.as_deref()?.trim();
-            let extra_window = extra.window.as_ref()?;
-            if title.is_empty()
-                || extra_window.window_minutes != window.window_minutes
-                || extra_window.resets_at != window.resets_at
-            {
-                return None;
-            }
-            Some(title.to_string())
-        })
     }
 
     /// Plan label from `identity.loginMethod`, capitalised, e.g. "Plus".
@@ -617,14 +557,107 @@ pub fn parse_usage_json(stdout: &str) -> Result<Vec<ProviderPayload>, String> {
     serde_json::from_str(&stdout[start..]).map_err(|e| format!("could not parse codexbar JSON: {e}"))
 }
 
-/// Run `codexbar usage --format json` and parse its output.
+/// Fetch enabled providers, then expand Codex and configured token accounts.
 ///
 /// The CLI exits non-zero when an individual provider fails but still prints a
 /// payload carrying the `error` field, so a parseable stdout always wins over
 /// the exit status.
 pub async fn fetch_usage() -> Result<Vec<ProviderPayload>, String> {
-    let output = run_codexbar(&["usage", "--format", "json"]).await?;
-    parse_output(&output, parse_usage_json)
+    let (usage, config) = tokio::join!(
+        run_codexbar(&["usage", "--format", "json"]),
+        run_codexbar(&["config", "dump"]),
+    );
+    let mut payloads = parse_output(&usage?, parse_usage_json)?;
+    // Decode only account counts. Credentials from `config dump` are ignored
+    // and never saved or logged. Older CLIs can still use the base usage call.
+    let configured = config
+        .ok()
+        .and_then(|output| serde_json::from_slice::<AccountConfiguration>(&output.stdout).ok())
+        .unwrap_or_default();
+    let providers = account_providers(&payloads, &configured);
+    for provider in providers {
+        let result = match run_codexbar(&[
+            "usage",
+            "--provider",
+            &provider,
+            "--all-accounts",
+            "--format",
+            "json",
+        ])
+        .await
+        {
+            Ok(output) => parse_output(&output, parse_usage_json),
+            Err(error) => Err(error),
+        };
+        // A failed/unsupported expansion keeps the base provider visible.
+        // Parseable account errors remain separate rows beside healthy ones.
+        if let Ok(accounts) = result {
+            replace_accounts(&mut payloads, &provider, accounts);
+        }
+    }
+    Ok(payloads)
+}
+
+#[derive(Default, Deserialize)]
+struct AccountConfiguration {
+    #[serde(default)]
+    providers: Vec<AccountProvider>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountProvider {
+    id: String,
+    token_accounts: Option<TokenAccounts>,
+}
+
+#[derive(Deserialize)]
+struct TokenAccounts {
+    #[serde(default)]
+    accounts: Vec<serde::de::IgnoredAny>,
+}
+
+fn account_providers(payloads: &[ProviderPayload], config: &AccountConfiguration) -> Vec<String> {
+    let mut providers = Vec::new();
+    for payload in payloads {
+        if (payload.provider == "codex"
+            || config.providers.iter().any(|configured| {
+                configured.id == payload.provider
+                    && configured
+                        .token_accounts
+                        .as_ref()
+                        .is_some_and(|tokens| tokens.accounts.len() > 1)
+            }))
+            && !providers.contains(&payload.provider)
+        {
+            providers.push(payload.provider.clone());
+        }
+    }
+    providers
+}
+
+/// Replace a provider in place so expansion preserves the configured order.
+fn replace_accounts(
+    payloads: &mut Vec<ProviderPayload>,
+    provider: &str,
+    accounts: Vec<ProviderPayload>,
+) {
+    if accounts.is_empty()
+        || accounts.iter().any(|account| account.provider != provider)
+        || (accounts.len() == 1
+            && accounts[0].error.is_some()
+            && accounts[0].account_text().is_none())
+    {
+        return;
+    }
+    let Some(index) = payloads
+        .iter()
+        .position(|payload| payload.provider == provider)
+    else {
+        return;
+    };
+    payloads.retain(|payload| payload.provider != provider);
+    payloads.splice(index..index, accounts);
 }
 
 /// Parse the stdout of `codexbar cost --format json --days 30`.
@@ -799,6 +832,83 @@ fn fallback_candidates() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expands_only_enabled_multi_account_providers_and_codex() {
+        let config: AccountConfiguration = serde_json::from_str(
+            r#"{"providers":[
+            {"id":"claude","tokenAccounts":{"accounts":[{"token":"ignored"},{}]}},
+            {"id":"cursor","tokenAccounts":{"accounts":[{},{}]}},
+            {"id":"antigravity","tokenAccounts":{"accounts":[{}]}}
+        ]}"#,
+        )
+        .unwrap();
+        let payloads = parse_usage_json(
+            r#"[
+            {"provider":"codex"},{"provider":"claude"},
+            {"provider":"antigravity"},{"provider":"codex"}
+        ]"#,
+        )
+        .unwrap();
+        assert_eq!(account_providers(&payloads, &config), ["codex", "claude"]);
+        assert_eq!(
+            account_providers(&payloads, &AccountConfiguration::default()),
+            ["codex"]
+        );
+    }
+
+    #[test]
+    fn account_expansion_preserves_order_and_individual_errors() {
+        let mut payloads = parse_usage_json(
+            r#"[
+            {"provider":"claude"},{"provider":"codex"},{"provider":"antigravity"}
+        ]"#,
+        )
+        .unwrap();
+        let accounts = parse_usage_json(r#"[
+            {"provider":"codex","account":"personal@example.com","usage":{"primary":{"usedPercent":3}}},
+            {"provider":"codex","account":"team@example.com","error":{"message":"Not signed in"}}
+        ]"#).unwrap();
+        replace_accounts(&mut payloads, "codex", accounts);
+        assert_eq!(
+            payloads
+                .iter()
+                .map(|p| p.provider.as_str())
+                .collect::<Vec<_>>(),
+            ["claude", "codex", "codex", "antigravity"]
+        );
+        assert_eq!(
+            payloads[1]
+                .usage
+                .as_ref()
+                .unwrap()
+                .primary
+                .as_ref()
+                .unwrap()
+                .used_percent,
+            Some(3.0)
+        );
+        assert_eq!(payloads[2].account_text(), Some("team@example.com"));
+        assert_eq!(payloads[2].error.as_ref().unwrap().message, "Not signed in");
+    }
+
+    #[test]
+    fn empty_or_unrelated_expansion_keeps_the_base_account() {
+        let mut payloads =
+            parse_usage_json(r#"[{"provider":"codex","account":"personal@example.com"}]"#).unwrap();
+        replace_accounts(&mut payloads, "codex", Vec::new());
+        let unrelated = parse_usage_json(r#"[{"provider":"claude"}]"#).unwrap();
+        replace_accounts(&mut payloads, "codex", unrelated);
+        // Older CLIs and account-resolution failures can return an error
+        // payload without selecting an account. Keep the ambient result.
+        let unsupported = parse_usage_json(
+            r#"[{"provider":"codex","error":{"message":"No token accounts configured"}}]"#,
+        )
+        .unwrap();
+        replace_accounts(&mut payloads, "codex", unsupported);
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0].account_text(), Some("personal@example.com"));
+    }
 
     /// Two providers, mirroring the documented `docs/cli.md` payload shape.
     const MULTI_PROVIDER: &str = r#"[
@@ -1012,8 +1122,8 @@ mod tests {
         assert_eq!(ag_primary.window_label("Primary"), "Primary");
     }
 
-    /// The live CLI carries the email in `usage.identity.accountEmail`, never in
-    /// the top-level `account` that `docs/cli.md` documents.
+    /// Default single-account output carries the email in the usage identity.
+    /// Multi-account queries also populate the top-level account field.
     #[test]
     fn resolves_the_account_from_identity() {
         let payloads = parse_usage_json(REAL_WORLD).unwrap();
@@ -1328,124 +1438,77 @@ mod tests {
         );
     }
 
-    /// Live `codexbar usage --format json` output for antigravity, captured
-    /// from the CLI with the account email redacted. Its two windows are
-    /// separate quota pools rather than a session and a weekly limit, but both
-    /// are 10080-minute windows, so both derive "Weekly" and only
-    /// `extraRateWindows` says which pool is which.
-    const ANTIGRAVITY_EXTRAS: &str = r#"[
+    /// CodexBar 0.73.0 Antigravity output, trimmed to labels and usage windows.
+    /// Neither window has a duration, and `extraRateWindows` is absent.
+    const ANTIGRAVITY_LABELS: &str = r#"[
       {
         "provider": "antigravity",
+        "rateWindowLabels": { "primary": "Gemini Models", "secondary": "Claude and GPT" },
         "usage": {
-          "primary":   { "usedPercent": 0, "windowMinutes": 10080, "resetsAt": "2026-08-17T08:24:14Z" },
-          "secondary": { "usedPercent": 0, "windowMinutes": 10080, "resetsAt": "2026-08-17T08:24:14Z" },
-          "tertiary": null,
-          "extraRateWindows": [
-            { "title": "Gemini weekly",     "id": "antigravity-quota-summary-gemini-weekly",
-              "window": { "windowMinutes": 10080, "usedPercent": 0, "resetsAt": "2026-08-17T08:24:14Z" } },
-            { "title": "Claude/GPT weekly", "id": "antigravity-quota-summary-3p-weekly",
-              "window": { "windowMinutes": 10080, "resetsAt": "2026-08-17T08:24:14Z", "usedPercent": 0 } }
-          ],
-          "identity": {
-            "accountEmail": "redacted@example.com",
-            "providerID": "antigravity",
-            "loginMethod": "Antigravity Starter Quota"
-          },
-          "updatedAt": "2026-08-10T08:24:14Z"
-        },
-        "source": "cli"
+          "primary": { "usedPercent": 0, "resetsAt": "2026-10-15T12:10:34Z" },
+          "secondary": { "usedPercent": 0, "resetsAt": "2026-10-15T12:10:34Z" }
+        }
       }
     ]"#;
 
-    /// The same payload with the extras' reset times moved a day out, so they
-    /// no longer match the windows they sit beside.
-    const ANTIGRAVITY_MISMATCHED_EXTRAS: &str = r#"[
-      {
-        "provider": "antigravity",
-        "usage": {
-          "primary":   { "usedPercent": 0, "windowMinutes": 10080, "resetsAt": "2026-08-17T08:24:14Z" },
-          "secondary": { "usedPercent": 0, "windowMinutes": 10080, "resetsAt": "2026-08-17T08:24:14Z" },
-          "extraRateWindows": [
-            { "title": "Gemini weekly",
-              "window": { "windowMinutes": 10080, "usedPercent": 0, "resetsAt": "2026-08-18T08:24:14Z" } },
-            { "title": "Claude/GPT weekly",
-              "window": { "windowMinutes": 4320, "usedPercent": 0, "resetsAt": "2026-08-17T08:24:14Z" } }
-          ]
-        },
-        "source": "cli"
-      }
-    ]"#;
-
-    /// The labels the two tabs show, i.e. an override where there is one and
-    /// the derived label everywhere else.
     fn labels_of(payload: &str) -> Vec<String> {
-        let usage = usage_of(payload);
-        let overrides = usage.window_label_overrides(["Session", "Weekly", "Monthly"]);
+        let payloads = parse_usage_json(payload).unwrap();
+        let payload = &payloads[0];
+        let usage = payload.usage.as_ref().unwrap();
         [
             usage.primary.as_ref(),
             usage.secondary.as_ref(),
             usage.tertiary.as_ref(),
         ]
         .into_iter()
-        .zip(overrides)
+        .zip(payload.window_labels())
         .zip(["Session", "Weekly", "Monthly"])
         .filter_map(|((window, label), fallback)| {
             let window = window?;
-            Some(label.unwrap_or_else(|| window.window_label(fallback)))
+            Some(
+                label
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| window.window_label(fallback)),
+            )
         })
         .collect()
     }
 
     #[test]
-    fn names_antigravitys_colliding_windows_from_their_extras() {
+    fn uses_cli_labels_for_antigravity_without_window_lengths() {
         assert_eq!(
-            labels_of(ANTIGRAVITY_EXTRAS),
-            ["Gemini weekly", "Claude/GPT weekly"]
+            labels_of(ANTIGRAVITY_LABELS),
+            ["Gemini Models", "Claude and GPT"]
         );
     }
 
     #[test]
-    fn leaves_providers_with_distinct_windows_alone() {
-        // Claude reports a 300-minute session beside a weekly window, so there
-        // is no collision and nothing to override.
-        let claude = parse_usage_json(REAL_WORLD).unwrap()[1]
-            .usage
-            .clone()
-            .unwrap();
-        assert_eq!(
-            claude.window_label_overrides(["Session", "Weekly", "Monthly"]),
-            [None, None, None]
-        );
+    fn cli_labels_take_precedence_for_every_slot() {
+        let payload = r#"[{
+          "provider": "example",
+          "rateWindowLabels": { "primary": " Daily quota ", "secondary": "Models", "tertiary": "Requests" },
+          "usage": {
+            "primary": { "windowMinutes": 300 },
+            "secondary": { "windowMinutes": 10080 },
+            "tertiary": { "windowMinutes": 43200 }
+          }
+        }]"#;
+        assert_eq!(labels_of(payload), ["Daily quota", "Models", "Requests"]);
     }
 
     #[test]
-    fn ignores_extras_that_do_not_match_the_window_beside_them() {
-        // Both extras are titled, and the labels do collide, but one differs in
-        // reset time and the other in window length, so neither may claim a row.
-        let usage = usage_of(ANTIGRAVITY_MISMATCHED_EXTRAS);
-        assert_eq!(usage.extra_rate_windows.len(), 2);
-        assert_eq!(labels_of(ANTIGRAVITY_MISMATCHED_EXTRAS), ["Weekly", "Weekly"]);
-    }
-
-    #[test]
-    fn derives_labels_as_before_without_extras() {
-        // Codex: a session and a weekly window, neither colliding. Antigravity
-        // in the real-world payload reports no window lengths at all, so both
-        // labels come from the callers' fallbacks and stay distinct.
-        let payloads = parse_usage_json(REAL_WORLD).unwrap();
-        for payload in &payloads {
-            let usage = payload.usage.as_ref().unwrap();
-            assert!(usage.extra_rate_windows.is_empty());
-        }
+    fn missing_or_blank_cli_labels_use_duration_then_slot_fallback() {
         assert_eq!(labels_of(MULTI_PROVIDER), ["Session", "Weekly"]);
-        assert_eq!(
-            payloads[2]
-                .usage
-                .as_ref()
-                .unwrap()
-                .window_label_overrides(["Session", "Weekly", "Monthly"]),
-            [None, None, None]
-        );
+        let payload = r#"[{
+          "provider": "example",
+          "rateWindowLabels": { "primary": null, "secondary": "  " },
+          "usage": {
+            "primary": { "windowMinutes": 1440 },
+            "secondary": { "windowMinutes": 10080 },
+            "tertiary": { "usedPercent": 10 }
+          }
+        }]"#;
+        assert_eq!(labels_of(payload), ["1-day", "Weekly", "Monthly"]);
     }
 
     #[test]

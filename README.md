@@ -16,7 +16,7 @@ Grok, etc.).
 
 The applet adds a small icon to the COSMIC panel. Clicking it opens a popup with
 a tab per provider - each showing that provider's logo over its name - plus an
-**Overview** tab that condenses every provider to one line. The tab strip
+**Overview** tab that groups each provider's accounts. The tab strip
 scrolls horizontally, so any number of providers fits. A provider's own tab
 shows:
 
@@ -30,9 +30,10 @@ shows:
 
 ![Screenshot of the Overview tab, listing every provider's windows one line each](docs/screenshot-overview.png)
 
-The popup body scrolls, so extra providers or windows never push content out of
-view. State is refreshed every 60 seconds, and again whenever the popup is
-opened.
+Providers with multiple accounts stack their usage sections in one tab, with
+one shared local cost block below them. The popup body scrolls, so extra accounts
+or windows never push content out of view. State is refreshed every 60 seconds,
+and again whenever the popup is opened.
 
 ## How it works
 
@@ -48,6 +49,32 @@ and renders the resulting JSON. If the CLI is missing, fails, or reports an erro
 for a provider, the popup shows that error instead of going blank. Only Codex and
 Claude appear in the `cost` output; providers missing from it simply have no cost
 block. A failing `cost` call never blanks the usage display.
+
+### Multiple accounts
+
+The applet follows CodexBar's account configuration. It fetches all visible
+Codex accounts, including additional Codex homes in `codexProfileHomePaths`.
+For other enabled providers, it fetches all configured `tokenAccounts` when
+there are at least two. See [CodexBar's account configuration](https://github.com/steipete/CodexBar/blob/v0.73.0/docs/configuration.md).
+
+Each provider keeps one tab. Account sections show their own usage, pace,
+credits, and errors. Overview groups account summaries beneath the provider
+name. A failed account does not hide the others. If the account expansion
+command fails or returns no accounts, the applet keeps the normal usage result.
+
+Use `account_labels` in the applet's `config.toml` for short names:
+
+```toml
+account_labels = { "personal@example.com" = "Personal", "team@example.com" = "Virufy" }
+```
+
+Keys match the email or account label reported by CodexBar. Otherwise, the
+applet uses non-email CLI labels or numbered headings such as "Account 1".
+`show_account = false` hides email captions; section names stay visible.
+
+Cost appears once per provider. CodexBar scans local logs without splitting
+cost by account, so this block describes activity on the machine and is not an
+account bill. Additional Codex homes may not contribute to that scan.
 
 ## Prerequisites
 
@@ -190,6 +217,7 @@ rather than being swallowed.
 | `show_reset_credits` | bool | `true` | Show the "Limit reset credits: N available" line — the periodic grants that let a Codex account reset its weekly window early. Hidden whenever nothing is redeemable, which is most of the time. |
 | `show_credits` | bool | `true` | Show the remaining-credits line for providers that report credits. |
 | `show_account` | bool | `true` | Show the account (usually an email address) beside the provider name. |
+| `account_labels` | table | `{}` | Short names for stacked accounts, keyed by their email or CLI account label. |
 | `usage_display` | string | `"used"` | `"used"` reports quota consumed, `"remaining"` reports quota left (percentages and bars are inverted). Each line names the mode, e.g. "20% used". An unrecognised value falls back to `"used"`. |
 | `background_opacity` | float | *unset* (commented out in the generated file) | Alpha of the popup background, from `0.0` (fully transparent) to `1.0` (solid). Leave it out to follow the COSMIC theme, which is what makes the popup look like every other panel popup — translucent when "frosted applets" is on so the compositor blurs behind it, opaque when it is off. Setting a value overrides the theme outright; use `1.0` if a translucent popup is hard to read over a busy wallpaper. Out-of-range values are clamped. |
 
@@ -225,29 +253,32 @@ CodexBar's `docs/cli.md` and defined by `ProviderPayload` in
 JSON **array** of provider payloads, encoded by Swift's `JSONEncoder` with
 lowerCamelCase keys and ISO 8601 dates.
 
-Only the fields this applet displays are decoded — `provider`, `account`,
+Only the fields this applet displays are decoded: `provider`, `account`,
 `version`, `source`, `usage.{primary,secondary,tertiary}.{usedPercent,
 windowMinutes,resetsAt,resetDescription}`, `usage.updatedAt`,
+`rateWindowLabels.{primary,secondary,tertiary}`,
 `usage.identity.{loginMethod,accountEmail}`,
 `usage.codexResetCredits.credits[].{status,
 expires_at}`, `pace.{primary,secondary,tertiary}`, `credits.remaining` and
 `error.message`. The account shown beside the provider name comes from
-`usage.identity.accountEmail`; the top-level `account` that `docs/cli.md`
-documents is not emitted by the CLI in practice and is only a fallback. From
+`usage.identity.accountEmail`, with top-level `account` as a fallback. The CLI
+populates `account` when querying multiple accounts. From
 `codexbar cost` it reads
 `provider`, `currencyCode`, `sessionCostUSD`, `sessionTokens`,
-`last30DaysCostUSD` and `last30DaysTokens`. Everything is optional and unknown
-keys are ignored, so a CodexBar release that adds or renames fields degrades
-gracefully rather than breaking the applet.
+`last30DaysCostUSD` and `last30DaysTokens`. Display fields are optional and
+unknown keys are ignored, so a CodexBar release that adds or removes optional
+fields degrades gracefully rather than breaking the applet.
 
-Several pieces of presentation are *not* in the JSON and are computed here:
+The applet uses CLI window labels and computes other display text:
 
 - **Provider labels.** The payload carries only the provider id, so `codex` and
   `claude` are mapped to "Codex" and "Claude" and anything else is capitalised.
-- **Window names.** "Session" / "Weekly" / "Monthly" are derived from
-  `windowMinutes` (`<= 300`, `10080`, `43200`); other values are rendered
-  generically, and a missing `windowMinutes` falls back to the name of the slot
-  the window came from.
+- **Window names.** CodexBar 0.73 supplies `rateWindowLabels` at the top level,
+  including "Gemini Models" and "Claude and GPT" for Antigravity. Missing or
+  blank labels fall back to `windowMinutes`: "Session" / "Weekly" / "Monthly"
+  for `<= 300`, `10080`, `43200`, or a generic duration for other values.
+  Missing durations fall back to the slot's "Session" / "Weekly" / "Monthly"
+  name. Older CLI versions use these fallbacks too.
 - **Reset text.** A countdown computed from `resetsAt` is preferred over
   `resetDescription`, which is a localised wall-clock string ("Resets 3:50pm
   (Asia/Tokyo)") that is both wider than the popup's value column and less
