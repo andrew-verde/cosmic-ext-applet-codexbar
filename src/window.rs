@@ -151,6 +151,8 @@ pub struct Window {
     /// Last successful cost data, keyed by provider id. Empty until the first
     /// successful response, or when that response reports nothing.
     costs: Vec<CostPayload>,
+    usage_error: Option<String>,
+    cost_error: Option<String>,
     tab: Tab,
     config: Config,
     /// Why the config file on disk was not honoured, shown in the popup.
@@ -180,6 +182,8 @@ impl Application for Window {
             state: State::Loading,
             refresh: Refresh::default(),
             costs: Vec::new(),
+            usage_error: None,
+            cost_error: None,
             tab: Tab::Overview,
             config,
             config_error,
@@ -241,13 +245,15 @@ impl Application for Window {
                 {
                     self.tab = Tab::Overview;
                 }
+                self.usage_error = result.as_ref().err().cloned();
                 self.state.apply_usage(result);
             }
             Message::CostFetched(generation, result) => {
-                if self.refresh.complete_cost(generation)
-                    && let Ok(costs) = result
-                {
-                    self.costs = costs;
+                if self.refresh.complete_cost(generation) {
+                    self.cost_error = result.as_ref().err().cloned();
+                    if let Ok(costs) = result {
+                        self.costs = costs;
+                    }
                 }
             }
             Message::TabSelected(tab) => self.tab = tab,
@@ -315,6 +321,20 @@ impl Application for Window {
         {
             content = content.push(self.tab_strip(payloads));
         }
+        let mut notices = widget::Column::new().spacing(8);
+        if self.usage_error.is_some() && matches!(self.state, State::Loaded(_)) {
+            notices = notices.push(widget::text::caption(
+                "Last refresh failed. Showing previous usage.",
+            ));
+        }
+        if self.cost_error.is_some() && self.config.show_cost {
+            notices = notices.push(widget::text::caption(if self.costs.is_empty() {
+                "Cost refresh failed."
+            } else {
+                "Cost refresh failed. Showing previous cost data."
+            }));
+        }
+        let body = notices.push(body);
         content = content.push(
             widget::container(widget::scrollable(body.width(Length::Fill)))
                 .max_height(MAX_BODY_HEIGHT)
@@ -404,6 +424,11 @@ impl Window {
         if grouped {
             column = column.push(provider_heading(accounts[0]));
         }
+        if grouped
+            && let Some(status) = accounts.iter().find_map(|payload| service_status(payload))
+        {
+            column = column.push(widget::text::body(status).width(Length::Fill));
+        }
         for (index, &payload) in accounts.iter().enumerate() {
             let name = if grouped {
                 account_label(payload, index, &self.config)
@@ -423,6 +448,11 @@ impl Window {
             .width(Length::Fill);
         if grouped {
             column = column.push(provider_heading(accounts[0]));
+        }
+        if grouped
+            && let Some(status) = accounts.iter().find_map(|payload| service_status(payload))
+        {
+            column = column.push(widget::text::body(status).width(Length::Fill));
         }
         for (index, &payload) in accounts.iter().enumerate() {
             if index > 0 {
@@ -464,10 +494,13 @@ impl Window {
         // Spacing here is deliberately uneven: the account line belongs to the
         // header, so the bars below it get a wider gap, while the bars
         // themselves stay tightly grouped (see `bars` below).
-        let column = widget::Column::new()
+        let mut column = widget::Column::new()
             .spacing(SUMMARY_HEADER_SPACING)
             .width(Length::Fill)
             .push(split_row(title, account_caption(payload, &self.config)));
+        if !grouped && let Some(status) = service_status(payload) {
+            column = column.push(widget::text::body(status).width(Length::Fill));
+        }
 
         if let Some(error) = &payload.error {
             return column
@@ -499,6 +532,9 @@ impl Window {
         }
 
         if !any {
+            if let Some(details) = provider_details(payload) {
+                return column.push(details).into();
+            }
             return column
                 .push(widget::text::caption("No usage data reported.").width(Length::Fill))
                 .into();
@@ -514,12 +550,13 @@ impl Window {
         window: &'a RateLimitWindow,
         label: String,
     ) -> Element<'a, Message> {
-        widget::Column::new()
-            .spacing(2)
-            .width(Length::Fill)
-            .push(widget::determinate_linear(
-                self.config.usage_display.fraction(window.fraction()),
-            ))
+        let mut column = widget::Column::new().spacing(2).width(Length::Fill);
+        if let Some(fraction) = window.fraction() {
+            column = column.push(widget::determinate_linear(
+                self.config.usage_display.fraction(fraction),
+            ));
+        }
+        column
             .push(split_row(
                 widget::text::body(self.percent_text(window)),
                 widget::text::caption(label),
@@ -548,6 +585,9 @@ impl Window {
             .width(Length::Fill)
             .push(split_row(title, account_caption(payload, &self.config)));
 
+        if !grouped && let Some(status) = service_status(payload) {
+            header = header.push(widget::text::body(status).width(Length::Fill));
+        }
         let mut column = widget::Column::new().spacing(BLOCK_SPACING).width(Length::Fill);
 
         if let Some(error) = &payload.error {
@@ -613,7 +653,9 @@ impl Window {
             }
         }
 
-        if !any {
+        if let Some(details) = provider_details(payload) {
+            column = column.push(details);
+        } else if !any {
             column = column.push(widget::text::body("No limit windows reported.").width(Length::Fill));
         }
 
@@ -662,13 +704,21 @@ impl Window {
             .push(split_row(
                 widget::text::heading(label),
                 widget::text::caption(reset.unwrap_or_default()),
-            ))
-            .push(widget::determinate_linear(
-                self.config.usage_display.fraction(window.fraction()),
-            ))
-            .push(widget::text::heading(self.percent_text(window)).width(Length::Fill));
+            ));
+        if let Some(fraction) = window.fraction() {
+            column = column
+                .push(widget::determinate_linear(
+                    self.config.usage_display.fraction(fraction),
+                ))
+                .push(widget::text::heading(self.percent_text(window)).width(Length::Fill));
+        } else {
+            column = column
+                .push(widget::text::heading("Unavailable"))
+                .push(widget::text::caption("No usage percentage reported."));
+        }
 
         if self.config.show_pace
+            && window.fraction().is_some()
             && let Some(pace) = pace
         {
             let line = pace_line(pace);
@@ -683,10 +733,10 @@ impl Window {
     /// "20% used" or "80% remaining", per `usage_display`. The word is part of
     /// the line so the active mode never needs a separate banner.
     fn percent_text(&self, window: &RateLimitWindow) -> String {
-        let percent = self
-            .config
-            .usage_display
-            .percent(window.used_percent.unwrap_or(0.0));
+        let Some(percent) = window.used_percent.filter(|percent| percent.is_finite()) else {
+            return "Unavailable".to_string();
+        };
+        let percent = self.config.usage_display.percent(percent.clamp(0.0, 100.0));
         format!("{percent:.0}% {}", self.config.usage_display.label())
     }
 
@@ -886,6 +936,67 @@ fn provider_heading<'a>(payload: &ProviderPayload) -> Element<'a, Message> {
     title.push(widget::text::title3(payload.label())).into()
 }
 
+/// Operational status stays quiet. Unknown upstream indicators remain readable.
+fn service_status(payload: &ProviderPayload) -> Option<String> {
+    let status = payload.status.as_ref()?;
+    let indicator = status.indicator.as_deref().map(str::trim).unwrap_or_default();
+    if indicator.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let description = nonblank(status.description.as_deref())
+        .or_else(|| nonblank(Some(indicator)))?;
+    let label = match indicator {
+        "minor" | "major" | "critical" => "Service issue",
+        _ => "Service status",
+    };
+    Some(format!("{label}: {description}"))
+}
+
+fn nonblank(text: Option<&str>) -> Option<&str> {
+    text.map(str::trim).filter(|text| !text.is_empty())
+}
+
+/// Render text detail rows, including providers that report no quota windows.
+fn provider_details(payload: &ProviderPayload) -> Option<Element<'_, Message>> {
+    let sections = payload.usage.as_ref()?.details.as_ref()?;
+    let mut column = widget::Column::new().spacing(8).width(Length::Fill);
+    let mut any = false;
+    for section in sections {
+        let rows: Vec<_> = section
+            .rows
+            .iter()
+            .flatten()
+            .filter_map(|row| {
+                let value = nonblank(row.value.as_deref())
+                    .or_else(|| nonblank(row.secondary_value.as_deref()))?;
+                let text = match nonblank(row.label.as_deref()) {
+                    Some(label) => format!("{label}: {value}"),
+                    None => value.to_owned(),
+                };
+                Some((row, text))
+            })
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        any = true;
+        let mut block = widget::Column::new().spacing(4).width(Length::Fill);
+        if let Some(title) = nonblank(section.title.as_deref()) {
+            block = block.push(widget::text::heading(title));
+        }
+        for (row, text) in rows {
+            block = block.push(widget::text::body(text).width(Length::Fill));
+            if nonblank(row.value.as_deref()).is_some()
+                && let Some(secondary) = nonblank(row.secondary_value.as_deref())
+            {
+                block = block.push(widget::text::caption(secondary).width(Length::Fill));
+            }
+        }
+        column = column.push(block);
+    }
+    any.then(|| column.into())
+}
+
 /// User names take precedence over non-email CLI labels. Numbered fallbacks
 /// distinguish accounts while keeping emails hidden when show_account is off.
 fn account_label(payload: &ProviderPayload, index: usize, config: &Config) -> String {
@@ -986,13 +1097,55 @@ mod tests {
         let mut state = State::Loading;
         state.apply_usage(Err("unavailable".into()));
         assert!(matches!(&state, State::Failed(error) if error == "unavailable"));
-        let payloads = crate::codexbar::parse_usage_json(r#"[{"provider":"codex"}]"#).unwrap();
+        let payloads = crate::codexbar::parse_usage_json(
+            r#"[{"provider":"codex"}]"#).unwrap();
         state.apply_usage(Ok(payloads));
         state.apply_usage(Err("timed out".into()));
         assert!(matches!(&state, State::Loaded(payloads) if payloads.len() == 1));
         // A successful empty response still reflects provider removal.
         state.apply_usage(Ok(Vec::new()));
         assert!(matches!(&state, State::Loaded(payloads) if payloads.is_empty()));
+    }
+
+    #[test]
+    fn service_status_hides_operational_and_preserves_future_indicators() {
+        let payloads = crate::codexbar::parse_usage_json(
+            r#"[
+            {"provider":"ok","status":{"indicator":"none","description":"All systems operational"}},
+            {"provider":"incident","status":{"indicator":"minor","description":"Degraded performance"}},
+            {"provider":"future","status":{"indicator":"future","description":"New status"}},
+            {"provider":"empty","status":{}}
+        ]"#,
+        )
+        .unwrap();
+        assert_eq!(service_status(&payloads[0]), None);
+        assert_eq!(
+            service_status(&payloads[1]).as_deref(),
+            Some("Service issue: Degraded performance")
+        );
+        assert_eq!(
+            service_status(&payloads[2]).as_deref(),
+            Some("Service status: New status")
+        );
+        assert_eq!(service_status(&payloads[3]), None);
+    }
+
+    #[test]
+    fn detail_rows_render_without_windows_and_empty_sections_are_skipped() {
+        let payloads = crate::codexbar::parse_usage_json(
+            r#"[
+            {"provider":"details","usage":{"details":[
+                {"title":"Balance","rows":[{"label":"Remaining","value":"12.40","secondaryValue":"Workspace balance"}]},
+                {"rows":[{"label":"Reporting window","secondaryValue":"Monthly"}]}
+            ]}},
+            {"provider":"empty","usage":{"details":[{"title":"Empty","rows":[{"label":"No value"}]}]}}
+        ]"#,
+        )
+        .unwrap();
+        let rendered = layout(provider_details(&payloads[0]).unwrap(), narrowest_block());
+        assert!(rendered.size().height > HEADING_LINE + CAPTION_LINE);
+        assert!(rendered.size().width <= narrowest_block());
+        assert!(provider_details(&payloads[1]).is_none());
     }
 
     #[test]
@@ -1026,11 +1179,14 @@ mod tests {
 
     #[test]
     fn uses_configured_account_names_without_exposing_email_in_fallbacks() {
-        let payloads = crate::codexbar::parse_usage_json(r#"[
+        let payloads = crate::codexbar::parse_usage_json(
+            r#"[
             {"provider":"codex","account":"team@example.com","usage":{"identity":{"accountEmail":"identity@example.com"}}},
             {"provider":"claude","account":"Work"},
             {"provider":"codex","account":"personal@example.com"}
-        ]"#).unwrap();
+        ]"#,
+        )
+        .unwrap();
         let config = crate::config::parse_config(
             r#"
             show_account = false
@@ -1251,4 +1407,3 @@ mod tests {
         );
     }
 }
-

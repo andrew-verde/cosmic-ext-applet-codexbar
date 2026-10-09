@@ -498,9 +498,11 @@ impl ResetCredit {
 }
 
 impl RateLimitWindow {
-    /// Fraction in `0.0..=1.0`, suitable for a progress bar.
-    pub fn fraction(&self) -> f32 {
-        (self.used_percent.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0) as f32
+    /// Fraction in `0.0..=1.0`, or none when the usage percentage is unavailable.
+    pub fn fraction(&self) -> Option<f32> {
+        self.used_percent
+            .filter(|percent| percent.is_finite())
+            .map(|percent| (percent / 100.0).clamp(0.0, 1.0) as f32)
     }
 
     /// Label derived from the rolling window length.
@@ -907,6 +909,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unknown_percentage_has_no_progress_fraction() {
+        let mut window: RateLimitWindow = serde_json::from_str("{}").unwrap();
+        assert_eq!(window.fraction(), None);
+        window.used_percent = Some(f64::NAN);
+        assert_eq!(window.fraction(), None);
+        window.used_percent = Some(0.0);
+        assert_eq!(window.fraction(), Some(0.0));
+        window.used_percent = Some(100.0);
+        assert_eq!(window.fraction(), Some(1.0));
+    }
+
+    #[test]
     fn parses_provider_status_without_restricting_indicators() {
         let payloads = parse_usage_json(
             r#"[{
@@ -1267,7 +1281,7 @@ mod tests {
         let primary = usage.primary.as_ref().unwrap();
         assert_eq!(primary.used_percent, Some(28.0));
         assert_eq!(primary.window_label("Primary"), "Session");
-        assert!((primary.fraction() - 0.28).abs() < 1e-6);
+        assert!((primary.fraction().unwrap() - 0.28).abs() < 1e-6);
 
         let secondary = usage.secondary.as_ref().unwrap();
         assert_eq!(secondary.window_label("Secondary"), "Weekly");

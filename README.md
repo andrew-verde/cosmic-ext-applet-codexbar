@@ -10,6 +10,16 @@ This is a third-party project. It is not official COSMIC software and is not end
 
 Install the COSMIC desktop, Rust, `just`, and the CodexBar CLI. Follow the [build and installation guide](docs/install.md). See [account and display settings](docs/configuration.md) to configure the applet.
 
+## Privacy
+
+To hide account email captions while recording or streaming, set this in `~/.config/cosmic-ext-applet-codexbar/config.toml`:
+
+```toml
+show_account = false
+```
+
+This hides account captions in both the Overview and provider tabs. Multiple accounts keep their configured names or numbered headings such as "Account 1". Use names without personal information in `account_labels`. Custom labels and provider messages or detail rows can still contain personal information. See [configuration](docs/configuration.md).
+
 ## Documentation
 
 - [Installation and panel setup](docs/install.md)

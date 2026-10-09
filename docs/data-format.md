@@ -9,7 +9,7 @@ codexbar cost --format json --days 30
 
 CodexBar must be installed on the host. The applet runs one refresh at a time, including both usage and cost queries. Each command has a 30-second timeout, and the full usage fetch has a 45-second limit.
 
-If an initial query fails, the popup shows an error. Later command failures preserve the last successful data. Provider errors returned in a successful payload still appear for that provider. Providers without cost data have no cost block.
+If an initial query fails, the popup shows an error. Later command failures preserve the last successful data and show a refresh failure caption. Usage and cost failures have separate captions. Provider errors returned in a successful payload still appear for that provider. Providers without cost data have no cost block.
 
 ## Usage payload
 
@@ -24,13 +24,15 @@ The displayed fields are:
 - `usage.codexResetCredits.credits`, including each credit's `status` and `expires_at`.
 - `pace.primary`, `.secondary`, and `.tertiary`; `credits.remaining`; and `error.message`.
 
-The parser also accepts optional `status` fields and text rows in `usage.details`. It ignores detail charts and progress metadata. Their display is being added separately.
+The applet displays non-operational provider `status` messages once per provider in both views. It also displays text rows from `usage.details` in the provider tab and in Overview when no summary windows exist. Empty rows, detail charts, and progress metadata are ignored.
 
 The account caption uses `usage.identity.accountEmail`, falling back to the top-level `account` field. CodexBar fills `account` when it queries multiple accounts.
 
 For cost output, the applet reads `provider`, `currencyCode`, `sessionCostUSD`, `sessionTokens`, `last30DaysCostUSD`, and `last30DaysTokens`.
 
 ## Display labels and fallbacks
+
+A reported window without a usage percentage displays "Unavailable" with no progress bar or pace projection. It does not imply zero usage or a full remaining quota. Windows that are absent from the payload are skipped.
 
 CodexBar provides provider IDs, so the applet maps `codex` and `claude` to "Codex" and "Claude" and capitalizes other IDs. The current payload also provides `rateWindowLabels`, which the applet uses as window names. For missing or blank labels, it uses `windowMinutes` to choose Session, Weekly, Monthly, or a duration label. If the duration is missing, it uses the slot name. Older CLI versions without `rateWindowLabels` use these fallbacks.
 
