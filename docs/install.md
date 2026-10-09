@@ -44,8 +44,12 @@ cd flatpak
 flatpak run --filesystem=host --share=network \
     --env=FLATPAK_USER_DIR="$HOME/.local/share/flatpak" \
     --command=flatpak-builder org.flatpak.Builder \
-    --user --force-clean --install \
+    --user --force-clean \
     build io.github.andrew_verde.cosmic-ext-applet-codexbar.json
+
+flatpak build-export .flatpak-builder/cache build master
+flatpak install --user --reinstall .flatpak-builder/cache \
+    io.github.andrew_verde.cosmic-ext-applet-codexbar
 ```
 
 `FLATPAK_USER_DIR` lets the builder find the installed COSMIC base app. The manifest uses `flatpak/cargo-sources.json` to build Rust dependencies offline. Regenerate that file after changing `Cargo.lock`:
@@ -57,14 +61,9 @@ flatpak run --filesystem=host --command=flatpak-cargo-generator \
 
 CodexBar must be installed on the host because it reads provider credentials from host directories such as `~/.codex` and `~/.claude`. The sandbox runs the CLI through `flatpak-spawn --host`. It reads applet settings from the host's `~/.config/cosmic-ext-applet-codexbar/config.toml`.
 
-When building with the `org.flatpak.Builder` Flatpak, its export step may write `/app/bin/flatpak` in the exported desktop file. That path does not exist on the host. If the applet opens as a floating window, replace it in place:
+The host `flatpak build-export` command above corrects a launcher path that the builder Flatpak can export as `/app/bin/flatpak`. The installed launcher must use the host's `/usr/bin/flatpak`.
 
-```sh
-sed -i 's|^Exec=/app/bin/flatpak |Exec=/usr/bin/flatpak |' \
-    ~/.local/share/flatpak/exports/share/applications/io.github.andrew_verde.cosmic-ext-applet-codexbar.desktop
-```
-
-Builds made with a native `flatpak-builder` do not have this issue.
+Keep the launcher under Flatpak's export directory. Do not copy it to `~/.local/share/applications` as an override. COSMIC identifies Flatpak applets by the launcher path and passes their panel socket only when it recognizes that path. A native launcher override can make the icon open as a floating desktop window. See [COSMIC's Flatpak detection](https://github.com/pop-os/cosmic-panel/blob/master/cosmic-panel-bin/src/space/panel_space.rs#L203-L207).
 
 ## Add the applet to the panel
 
