@@ -489,7 +489,11 @@ impl Window {
         if !grouped && let Some(icon) = provider_glyph(&payload.provider) {
             title = title.push(glyph(icon, HEADER_ICON_SIZE));
         }
-        title = title.push(widget::text::title3(name));
+        title = title.push(if grouped {
+            widget::text::heading(name)
+        } else {
+            widget::text::title3(name)
+        });
 
         // Spacing here is deliberately uneven: the account line belongs to the
         // header, so the bars below it get a wider gap, while the bars
@@ -576,7 +580,11 @@ impl Window {
         if !grouped && let Some(icon) = provider_glyph(&payload.provider) {
             title = title.push(glyph(icon, HEADER_ICON_SIZE));
         }
-        title = title.push(widget::text::title3(name));
+        title = title.push(if grouped {
+            widget::text::heading(name)
+        } else {
+            widget::text::title3(name)
+        });
 
         // The header's two rows belong together, so they are their own column;
         // the outer spacing is what separates the major blocks.
