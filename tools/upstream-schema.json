@@ -1,0 +1,12 @@
+{
+  "ref": "v0.73.0",
+  "commit": "1d313fe50a361fc0a12383da0cdc11a75f59daa5",
+  "files": {
+    "Sources/CodexBarCLI/CLIPayloads.swift": "a28d8ce259d863fff15b935be95fb3906cc00c75",
+    "Sources/CodexBarCLI/CLICostCommand.swift": "e4d6ed6e7ee0814ce5c6bf09b2d811e0938b1d0d",
+    "Sources/CodexBarCore/UsageFetcher.swift": "acb73a8413ef212ff0020a7b147501dd900a155d",
+    "Sources/CodexBarCore/CreditsModels.swift": "1ea28789853e59fbfd789a31f0b9ca6b592b24db",
+    "Sources/CodexBarCore/CostUsageModels.swift": "0be5cfd2e5377ebcce6cab5dacb0b4cea10a7404",
+    "Sources/CodexBarCore/ProviderDetailSection.swift": "ee28d7acb266daab3f1dfbfc7f6d65967cf516cd"
+  }
+}

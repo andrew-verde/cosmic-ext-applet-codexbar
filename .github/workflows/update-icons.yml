@@ -1,58 +1,109 @@
 name: Update provider icons
 
-# The applet renders whatever providers the codexbar CLI reports, but the brand
-# icons are vendored from CodexBar, so a provider added upstream has no logo
-# here until they are re-vendored. This keeps that from going stale silently:
-# it opens a pull request rather than pushing to main, so an unreviewed asset
-# change never lands on its own.
-
 on:
   schedule:
-    # Mondays, 05:00 UTC. Upstream adds providers over weeks, not hours.
     - cron: '0 5 * * 1'
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+
+concurrency:
+  group: codexbar-upstream-maintenance
+  cancel-in-progress: false
 
 jobs:
-  sync:
+  icons:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
-
-      - name: Re-vendor icons from CodexBar
-        env:
-          # Only used to raise the API rate limit on the directory listing.
-          GITHUB_TOKEN: ${{ github.token }}
-        run: python3 tools/update-icons.py
-
-      - name: Open a pull request
-        uses: peter-evans/create-pull-request@v8
         with:
-          # `token` defaults to ${{ github.token }}, which is enough to push a
-          # branch and open a pull request in this same repository given the
-          # permissions above. Requires "Allow GitHub Actions to create and
-          # approve pull requests" in the repository's Actions settings.
-          branch: automation/update-icons
-          delete-branch: true
-          add-paths: |
-            data/icons/providers
-            src/icons.rs
-          commit-message: Sync provider icons from CodexBar
-          title: Sync provider icons from CodexBar
-          body: |
-            Automated weekly sync of the provider brand icons from
-            [steipete/CodexBar](https://github.com/steipete/CodexBar),
-            run by [`update-icons.yml`](.github/workflows/update-icons.yml).
+          ref: main
 
-            `tools/update-icons.py` copies
-            `Sources/CodexBar/Resources/ProviderIcon-<slug>.svg` byte for byte
-            into `data/icons/providers/` and regenerates the `PROVIDER_ICONS`
-            table in `src/icons.rs`. Nothing else is touched, and the table is
-            generated sorted, which is what `provider_icon`'s binary search
-            needs.
+      - name: Test the icon updater
+        run: python3 -m unittest discover -s tools/tests -p 'test_*.py'
 
-            Worth a look before merging: that the added or changed files are
-            only icons and that generated table, and that `cargo test` passes.
+      - name: Sync and validate icons
+        id: icons
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/update-icons.py
+          git add data/icons/providers src/icons.rs
+          python3 tools/update-icons.py --validate-staged
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install build dependencies
+        if: steps.icons.outputs.changed == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libexpat1-dev libfontconfig1-dev \
+            libfreetype-dev libxkbcommon-dev libwayland-dev libudev-dev libdbus-1-dev \
+            libegl-dev fonts-dejavu-core
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.icons.outputs.changed == 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.icons.outputs.changed == 'true'
+
+      - name: Test the applet with updated icons
+        if: steps.icons.outputs.changed == 'true'
+        run: cargo test --locked
+
+      - name: Commit verified icon changes
+        if: steps.icons.outputs.changed == 'true'
+        run: |
+          python3 tools/update-icons.py --validate-staged
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Sync provider icons from CodexBar'
+          # A concurrent main-branch update makes this fail without overwriting it.
+          git push origin HEAD:main
+
+  schema:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Compare upstream payload sources
+        id: schema
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/check-upstream-schema.py --report /tmp/schema-report.md --github-output "$GITHUB_OUTPUT"
+
+      - name: Report schema drift once
+        if: steps.schema.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          title='CodexBar CLI schema changed'
+          issue="$(gh issue list --state open --search 'in:title "CodexBar CLI schema changed"' \
+            --json number,title --jq '.[] | select(.title == "CodexBar CLI schema changed") | .number' | head -n 1)"
+          if [ -n "$issue" ]; then
+            gh issue view "$issue" --json body --jq '.body' > /tmp/previous-report.md
+            python3 - <<'PY'
+          from pathlib import Path
+          Path('/tmp/previous-report.md').write_text(Path('/tmp/previous-report.md').read_text().rstrip() + '\n')
+          PY
+            if ! cmp -s /tmp/previous-report.md /tmp/schema-report.md; then
+              gh issue edit "$issue" --body-file /tmp/schema-report.md
+            fi
+          else
+            gh issue create --title "$title" --body-file /tmp/schema-report.md
+          fi
