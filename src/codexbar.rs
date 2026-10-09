@@ -64,6 +64,8 @@ pub struct ProviderPayload {
     #[serde(default)]
     pub source: Option<String>,
     #[serde(default)]
+    pub status: Option<ProviderStatusPayload>,
+    #[serde(default)]
     pub usage: Option<UsageSnapshot>,
     #[serde(default)]
     pub rate_window_labels: Option<RateWindowLabels>,
@@ -95,6 +97,45 @@ pub struct UsageSnapshot {
     pub identity: Option<Identity>,
     #[serde(default)]
     pub codex_reset_credits: Option<CodexResetCredits>,
+    #[serde(default)]
+    pub details: Option<Vec<ProviderDetailSection>>,
+}
+
+/// `ProviderStatusPayload` from CodexBar 0.73.0's `CLIPayloads.swift`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderStatusPayload {
+    /// Keep the raw indicator so a new upstream status does not reject usage.
+    #[serde(default)]
+    pub indicator: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// Text fields from CodexBar 0.73.0's `ProviderDetailSection.swift`.
+/// Charts and numeric progress metadata are ignored during decoding.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderDetailSection {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub rows: Option<Vec<ProviderDetailRow>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderDetailRow {
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub secondary_value: Option<String>,
 }
 
 /// Who the numbers belong to. The signed-in email is preferred over the
@@ -864,6 +905,114 @@ fn fallback_candidates() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_provider_status_without_restricting_indicators() {
+        let payloads = parse_usage_json(
+            r#"[{
+            "provider": "example",
+            "status": {
+                "indicator": "future-status",
+                "description": "Provider status message",
+                "updatedAt": "2026-10-09T01:02:03Z",
+                "url": "https://status.example.com",
+                "futureMetadata": {"incidents": 2}
+            }
+        }]"#,
+        )
+        .unwrap();
+        let status = payloads[0].status.as_ref().unwrap();
+        assert_eq!(status.indicator.as_deref(), Some("future-status"));
+        assert_eq!(
+            status.description.as_deref(),
+            Some("Provider status message")
+        );
+        assert_eq!(
+            status.updated_at,
+            Some("2026-10-09T01:02:03Z".parse().unwrap())
+        );
+        assert_eq!(status.url.as_deref(), Some("https://status.example.com"));
+    }
+
+    #[test]
+    fn parses_detail_text_and_ignores_charts_and_progress() {
+        let payloads = parse_usage_json(
+            r#"[{
+            "provider": "example",
+            "usage": {
+                "primary": {"usedPercent": 25},
+                "details": [{
+                    "title": "Credits",
+                    "rows": [{
+                        "label": "Remaining",
+                        "value": "42 credits",
+                        "secondaryValue": "Renews next month",
+                        "id": "remaining-credits",
+                        "progress": {"used": 8, "total": 50},
+                        "usageValue": 8,
+                        "futureMetadata": true
+                    }],
+                    "chart": {"kind": "future-kind", "points": []}
+                }]
+            }
+        }]"#,
+        )
+        .unwrap();
+        let usage = payloads[0].usage.as_ref().unwrap();
+        assert_eq!(usage.primary.as_ref().unwrap().used_percent, Some(25.0));
+        let sections = usage.details.as_ref().unwrap();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].title.as_deref(), Some("Credits"));
+        let rows = sections[0].rows.as_ref().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label.as_deref(), Some("Remaining"));
+        assert_eq!(rows[0].value.as_deref(), Some("42 credits"));
+        assert_eq!(
+            rows[0].secondary_value.as_deref(),
+            Some("Renews next month")
+        );
+    }
+
+    #[test]
+    fn missing_and_null_status_and_detail_fields_remain_optional() {
+        let payloads = parse_usage_json(
+            r#"[
+            {"provider":"legacy","usage":{}},
+            {"provider":"null","status":null,"usage":{"details":null}},
+            {"provider":"partial","status":{},"usage":{"details":[
+                {},
+                {"title":null,"rows":null},
+                {"rows":[{}, {"label":null,"value":null,"secondaryValue":null}]}
+            ]}}
+        ]"#,
+        )
+        .unwrap();
+        for payload in &payloads[..2] {
+            assert!(payload.status.is_none());
+            assert!(payload.usage.as_ref().unwrap().details.is_none());
+        }
+        let status = payloads[2].status.as_ref().unwrap();
+        assert!(status.indicator.is_none());
+        assert!(status.description.is_none());
+        assert!(status.updated_at.is_none());
+        assert!(status.url.is_none());
+        let sections = payloads[2]
+            .usage
+            .as_ref()
+            .unwrap()
+            .details
+            .as_ref()
+            .unwrap();
+        for section in &sections[..2] {
+            assert!(section.title.is_none());
+            assert!(section.rows.is_none());
+        }
+        for row in sections[2].rows.as_ref().unwrap() {
+            assert!(row.label.is_none());
+            assert!(row.value.is_none());
+            assert!(row.secondary_value.is_none());
+        }
+    }
 
     #[tokio::test]
     async fn timeout_kills_child_and_next_command_succeeds() {
