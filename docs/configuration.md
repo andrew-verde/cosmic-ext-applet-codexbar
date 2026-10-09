@@ -36,10 +36,10 @@ background_opacity = 1.0
 
 ## Multiple accounts
 
-Each provider has one tab. If CodexBar reports multiple accounts for a provider, the applet stacks their usage sections in that tab. Each section has its own usage, pace, credits, and errors. The Overview tab lists account summaries under the provider name. A failure for one account does not hide the others.
+Each provider has one tab. If CodexBar reports multiple accounts for a provider, each account becomes a row under the provider name. A collapsed row shows a small bar for the account's most-used window and a line summarizing its windows. Click a row to expand it to the account's full usage, pace, credits, and errors. A provider tab opens its first account. The Overview tab starts with every row collapsed. Each view remembers its own expanded rows while the applet runs. A failure for one account does not hide the others.
 
 The applet uses CodexBar's account configuration. It includes Codex accounts from `codexProfileHomePaths`. For other enabled providers, it includes configured `tokenAccounts` when at least two are present. See [CodexBar account configuration](https://github.com/steipete/CodexBar/blob/v0.73.0/docs/configuration.md).
 
-`account_labels` keys match the email or account label in the CLI data. If a key does not match, the applet uses a non-email CLI label or a numbered heading such as "Account 1". Setting `show_account = false` hides email captions, but keeps section names visible.
+`account_labels` keys match the email or account label in the CLI data. If a key does not match, the applet uses a non-email CLI label, then the email. Setting `show_account = false` replaces emails with numbered names such as "Account 1". Custom names stay visible.
 
 CodexBar does not split local log costs by account. The cost block appears once per provider and describes activity on the machine, not an account bill. Additional Codex homes may not be included in that scan.

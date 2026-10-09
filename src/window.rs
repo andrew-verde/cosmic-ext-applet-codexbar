@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -5,6 +6,7 @@ use chrono::{DateTime, Utc};
 use cosmic::app::Core;
 use cosmic::applet::cosmic_panel_config::PanelAnchor;
 use cosmic::applet::padded_control;
+use cosmic::iced::advanced::text::{Ellipsize, EllipsizeHeightLimit};
 use cosmic::iced::alignment::{Horizontal, Vertical};
 use cosmic::iced::widget::Container;
 use cosmic::iced::{
@@ -35,6 +37,10 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 /// stay inside [`popup_limits`]'s `max_height`, which bounds the whole popup.
 const MAX_BODY_HEIGHT: f32 = 460.0;
 
+/// Gap between the body and its scrollbar. With libcosmic's 8px bar this makes
+/// a 16px gutter that the layout tests below reserve as `SCROLLBAR_GUTTER`.
+const SCROLLBAR_SPACING: f32 = 8.0;
+
 /// Edge length of a provider icon in the tab strip.
 const TAB_ICON_SIZE: u16 = 18;
 
@@ -63,6 +69,24 @@ const SUMMARY_HEADER_SPACING: u16 = 10;
 /// Gap between the session and weekly bar groups of one Overview row.
 const SUMMARY_BAR_SPACING: u16 = 6;
 
+/// Shortens an email that does not fit to one line, keeping both ends
+/// readable, e.g. "personal@exa…mple.com".
+const ONE_LINE_MIDDLE: Ellipsize = Ellipsize::Middle(EllipsizeHeightLimit::Lines(1));
+
+/// Edge length of the expand/collapse chevron on an account row.
+const CHEVRON_SIZE: u16 = 16;
+
+/// Length of the bar summarizing a collapsed account row.
+const MINI_BAR_WIDTH: f32 = 56.0;
+
+/// Width reserved for a collapsed row's percentage, so "100%" fits and the
+/// bars of stacked rows line up.
+const MINI_PERCENT_WIDTH: f32 = 36.0;
+
+/// Padding inside an account row's button, which is what its hover
+/// highlight extends to.
+const ROW_PADDING: [u16; 2] = [4, 6];
+
 /// Identifies the autosizing popup body to the shell, mirroring the private
 /// `AUTOSIZE_ID` that `cosmic::applet::Context::popup_container` uses.
 static AUTOSIZE_ID: LazyLock<cosmic::iced::id::Id> =
@@ -76,6 +100,7 @@ pub enum Message {
     UsageFetched(u64, Result<Vec<ProviderPayload>, String>),
     CostFetched(u64, Result<Vec<CostPayload>, String>),
     TabSelected(Tab),
+    ToggleAccount(AccountRow),
 }
 
 /// Which page of the popup is showing.
@@ -85,6 +110,29 @@ pub enum Tab {
     Overview,
     /// The full layout for a single provider, keyed by provider id.
     Provider(String),
+}
+
+/// One collapsible account row. Overview and the provider tab track their rows
+/// separately, so opening an account in one view leaves the other unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AccountRow {
+    overview: bool,
+    provider: String,
+    /// The account's email or CLI label, so a row keeps its state across
+    /// refreshes. Accounts with neither fall back to their position.
+    account: String,
+}
+
+impl AccountRow {
+    fn new(payload: &ProviderPayload, index: usize, overview: bool) -> Self {
+        Self {
+            overview,
+            provider: payload.provider.clone(),
+            account: payload
+                .account_text()
+                .map_or_else(|| format!("#{index}"), str::to_owned),
+        }
+    }
 }
 
 enum State {
@@ -154,6 +202,8 @@ pub struct Window {
     usage_error: Option<String>,
     cost_error: Option<String>,
     tab: Tab,
+    /// Account rows the user has flipped from their default; see `is_open`.
+    toggled_accounts: HashSet<AccountRow>,
     config: Config,
     /// Why the config file on disk was not honoured, shown in the popup.
     config_error: Option<String>,
@@ -185,6 +235,7 @@ impl Application for Window {
             usage_error: None,
             cost_error: None,
             tab: Tab::Overview,
+            toggled_accounts: HashSet::new(),
             config,
             config_error,
         };
@@ -257,6 +308,11 @@ impl Application for Window {
                 }
             }
             Message::TabSelected(tab) => self.tab = tab,
+            Message::ToggleAccount(row) => {
+                if !self.toggled_accounts.remove(&row) {
+                    self.toggled_accounts.insert(row);
+                }
+            }
         }
         Task::none()
     }
@@ -277,6 +333,15 @@ impl Application for Window {
     }
 
     fn view_window(&self, _id: Id) -> Element<'_, Self::Message> {
+        self.popup_container(padded_control(self.popup_content()))
+            .limits(popup_limits())
+            .into()
+    }
+}
+
+impl Window {
+    /// Everything inside the popup panel: tabs, notices and the scrolling body.
+    fn popup_content(&self) -> Element<'_, Message> {
         let body = match &self.state {
             State::Loading => widget::Column::new().push(widget::text::body("Loading usage…")),
             State::Failed(error) => widget::Column::new()
@@ -335,22 +400,21 @@ impl Application for Window {
             }));
         }
         let body = notices.push(body);
+        // The scrollbar is embedded so it takes its own gutter when shown,
+        // instead of floating over the right-aligned column of text.
         content = content.push(
-            widget::container(widget::scrollable(body.width(Length::Fill)))
-                .max_height(MAX_BODY_HEIGHT)
-                .width(Length::Fill),
+            widget::container(
+                widget::scrollable(body.width(Length::Fill)).spacing(SCROLLBAR_SPACING),
+            )
+            .max_height(MAX_BODY_HEIGHT)
+            .width(Length::Fill),
         );
         if let Some(error) = &self.config_error {
             content = content.push(widget::text::caption(error.clone()));
         }
-
-        self.popup_container(padded_control(content.width(Length::Fill)))
-            .limits(popup_limits())
-            .into()
+        content.width(Length::Fill).into()
     }
-}
 
-impl Window {
     fn start_refresh(&mut self) -> Task<Action<Message>> {
         self.refresh
             .start()
@@ -415,60 +479,84 @@ impl Window {
             .into()
     }
 
-    /// Overview groups all account summaries beneath one provider heading.
+    /// One Overview entry. A single account sits under its provider's title;
+    /// several become collapsible rows beneath one provider heading.
     fn provider_summary<'a>(&'a self, accounts: &[&'a ProviderPayload]) -> Element<'a, Message> {
-        let grouped = accounts.len() > 1;
         let mut column = widget::Column::new()
             .spacing(SUMMARY_HEADER_SPACING)
             .width(Length::Fill);
-        if grouped {
-            column = column.push(provider_heading(accounts[0]));
+        if let [payload] = accounts {
+            column = column.push(split_row(
+                provider_heading(payload),
+                account_caption(payload, &self.config),
+            ));
+            if let Some(status) = service_status(payload) {
+                column = column.push(widget::text::body(status).width(Length::Fill));
+            }
+            return column.push(self.summary_body(payload)).into();
         }
-        if grouped
-            && let Some(status) = accounts.iter().find_map(|payload| service_status(payload))
-        {
+
+        column = column.push(provider_heading(accounts[0]));
+        if let Some(status) = accounts.iter().find_map(|payload| service_status(payload)) {
             column = column.push(widget::text::body(status).width(Length::Fill));
         }
         for (index, &payload) in accounts.iter().enumerate() {
-            let name = if grouped {
-                account_label(payload, index, &self.config)
+            let row = AccountRow::new(payload, index, true);
+            if self.is_open(&row, index) {
+                column = column.push(
+                    widget::Column::new()
+                        .spacing(SUMMARY_HEADER_SPACING)
+                        .width(Length::Fill)
+                        .push(self.account_row(payload, index, row))
+                        .push(self.summary_body(payload)),
+                );
             } else {
-                payload.label()
-            };
-            column = column.push(self.account_summary(payload, name, grouped));
+                column = column.push(self.account_row(payload, index, row));
+            }
         }
         column.into()
     }
 
-    /// One provider tab, with independent account sections and one local cost block.
+    /// One provider tab. A single account keeps the provider's title; several
+    /// become collapsible rows, then the provider's one local cost block.
     fn provider_detail<'a>(&'a self, accounts: &[&'a ProviderPayload]) -> Element<'a, Message> {
-        let grouped = accounts.len() > 1;
         let mut column = widget::Column::new()
             .spacing(BLOCK_SPACING)
             .width(Length::Fill);
-        if grouped {
-            column = column.push(provider_heading(accounts[0]));
-        }
-        if grouped
-            && let Some(status) = accounts.iter().find_map(|payload| service_status(payload))
-        {
-            column = column.push(widget::text::body(status).width(Length::Fill));
-        }
-        for (index, &payload) in accounts.iter().enumerate() {
-            if index > 0 {
-                column = column.push(widget::divider::horizontal::default());
+        if let [payload] = accounts {
+            let mut header = widget::Column::new()
+                .spacing(2)
+                .width(Length::Fill)
+                .push(split_row(
+                    provider_heading(payload),
+                    account_caption(payload, &self.config),
+                ));
+            if let Some(status) = service_status(payload) {
+                header = header.push(widget::text::body(status).width(Length::Fill));
             }
-            let name = if grouped {
-                account_label(payload, index, &self.config)
-            } else {
-                payload.label()
-            };
-            column = column.push(self.account_detail(payload, name, grouped));
+            column = column.push(self.account_detail(payload, header));
+        } else {
+            column = column.push(provider_heading(accounts[0]));
+            if let Some(status) = accounts.iter().find_map(|payload| service_status(payload)) {
+                column = column.push(widget::text::body(status).width(Length::Fill));
+            }
+            for (index, &payload) in accounts.iter().enumerate() {
+                let row = AccountRow::new(payload, index, false);
+                column = column.push(if self.is_open(&row, index) {
+                    let header = widget::Column::new()
+                        .spacing(2)
+                        .width(Length::Fill)
+                        .push(self.account_row(payload, index, row));
+                    self.account_detail(payload, header)
+                } else {
+                    self.account_row(payload, index, row)
+                });
+            }
         }
         if self.config.show_cost
             && let Some(cost) = self.cost_for(&accounts[0].provider)
         {
-            if grouped {
+            if accounts.len() > 1 {
                 column = column.push(widget::divider::horizontal::default()).push(
                     widget::text::caption(format!("{} cost on this machine", accounts[0].label())),
                 );
@@ -478,125 +566,197 @@ impl Window {
         column.into()
     }
 
-    /// One account summary, including its own failure when fetching it failed.
-    fn account_summary<'a>(
+    /// Whether an account row is expanded: its default, flipped if toggled.
+    /// Provider tabs open their first account; Overview starts collapsed.
+    fn is_open(&self, row: &AccountRow, index: usize) -> bool {
+        (!row.overview && index == 0) != self.toggled_accounts.contains(row)
+    }
+
+    /// A clickable account header. Collapsed, it shows a mini bar for the
+    /// account's tightest window and summary lines beneath; open, it shows the
+    /// account's email and the caller renders the account below it.
+    fn account_row<'a>(
         &'a self,
         payload: &'a ProviderPayload,
-        name: String,
-        grouped: bool,
+        index: usize,
+        row: AccountRow,
     ) -> Element<'a, Message> {
-        let mut title = widget::Row::new().spacing(8).align_y(Vertical::Center);
-        if !grouped && let Some(icon) = provider_glyph(&payload.provider) {
-            title = title.push(glyph(icon, HEADER_ICON_SIZE));
-        }
-        title = title.push(if grouped {
-            widget::text::heading(name)
+        let open = self.is_open(&row, index);
+        let name = account_label(payload, index, &self.config);
+        // The same windows the expanded account would show, so the mini bar
+        // never summarizes a window the lines below leave out.
+        let windows: Vec<_> = usage_windows(payload)
+            .into_iter()
+            .filter(|window| {
+                if row.overview {
+                    window.slot < 2
+                } else {
+                    self.shows_slot(window.slot)
+                }
+            })
+            .collect();
+
+        let chevron = widget::icon::from_name(if open {
+            "pan-down-symbolic"
         } else {
-            widget::text::title3(name)
-        });
-
-        // Spacing here is deliberately uneven: the account line belongs to the
-        // header, so the bars below it get a wider gap, while the bars
-        // themselves stay tightly grouped (see `bars` below).
-        let mut column = widget::Column::new()
-            .spacing(SUMMARY_HEADER_SPACING)
-            .width(Length::Fill)
-            .push(split_row(title, account_caption(payload, &self.config)));
-        if !grouped && let Some(status) = service_status(payload) {
-            column = column.push(widget::text::body(status).width(Length::Fill));
+            "pan-end-symbolic"
+        })
+        .handle();
+        let mut title = widget::Row::new()
+            .spacing(6)
+            .align_y(Vertical::Center)
+            .push(glyph(chevron, CHEVRON_SIZE));
+        let shows_email = open
+            && self.config.show_account
+            && payload.account_text().is_some_and(|email| email != name);
+        title = title.push(
+            widget::text::body(name)
+                .width(Length::Fill)
+                .ellipsize(ONE_LINE_MIDDLE),
+        );
+        if shows_email {
+            title = title.push(account_caption(payload, &self.config));
+        } else if !open
+            && payload.error.is_none()
+            && let Some(window) = tightest(&windows)
+            && let Some(fraction) = window.fraction()
+        {
+            title = title
+                .push(
+                    widget::determinate_linear(self.config.usage_display.fraction(fraction))
+                        .width(Length::Fixed(MINI_BAR_WIDTH)),
+                )
+                .push(
+                    widget::text::caption(self.short_percent(window))
+                        .width(Length::Fixed(MINI_PERCENT_WIDTH))
+                        .align_x(Horizontal::Right),
+                );
         }
 
+        let mut content = widget::Column::new()
+            .spacing(2)
+            .width(Length::Fill)
+            .push(title);
+        if !open {
+            for line in self.collapsed_lines(payload, &windows, row.overview) {
+                content = content.push(widget::text::caption(line).width(Length::Fill));
+            }
+        }
+        widget::button::custom(content)
+            // Plain text at rest with a hover highlight, like an applet menu entry.
+            .class(cosmic::theme::Button::AppletMenu)
+            .padding(ROW_PADDING)
+            .width(Length::Fill)
+            .on_press(Message::ToggleAccount(row))
+            .into()
+    }
+
+    /// What a collapsed account row says beneath its name: every window on
+    /// one line in Overview, or one line per window with its reset in a tab.
+    fn collapsed_lines(
+        &self,
+        payload: &ProviderPayload,
+        windows: &[UsageWindow<'_>],
+        overview: bool,
+    ) -> Vec<String> {
         if let Some(error) = &payload.error {
-            return column
-                .push(widget::text::caption(error.message.clone()).width(Length::Fill))
+            return vec![error.message.clone()];
+        }
+        if windows.is_empty() {
+            // Windows hidden by the config are not missing data.
+            let reported = !usage_windows(payload).is_empty() || provider_details(payload).is_some();
+            return if reported {
+                Vec::new()
+            } else {
+                vec!["No usage data reported.".to_string()]
+            };
+        }
+        if overview {
+            let parts: Vec<_> = windows
+                .iter()
+                .map(|window| format!("{} {}", window.label, self.short_percent(window.window)))
+                .collect();
+            return vec![parts.join(" · ")];
+        }
+        let now = Utc::now();
+        windows
+            .iter()
+            .map(|window| {
+                let mut line = format!("{} {}", window.label, self.percent_text(window.window));
+                if self.config.show_reset_countdown
+                    && let Some(reset) = window.window.reset_text(now)
+                {
+                    line = format!("{line} · {reset}");
+                }
+                line
+            })
+            .collect()
+    }
+
+    /// Session above weekly for one account in Overview, each drawn only when
+    /// the provider reports it (Codex often has no session window). Monthly
+    /// stays out of the Overview tab.
+    fn summary_body<'a>(&'a self, payload: &'a ProviderPayload) -> Element<'a, Message> {
+        if let Some(error) = &payload.error {
+            return widget::text::caption(error.message.clone())
+                .width(Length::Fill)
                 .into();
         }
-
-        // Session above weekly, each drawn only when the provider reports it
-        // (Codex often has no session window), so a provider that starts
-        // reporting one picks up its bar with no code change. Monthly stays out
-        // of the Overview tab.
+        let windows: Vec<_> = usage_windows(payload)
+            .into_iter()
+            .filter(|window| window.slot < 2)
+            .collect();
+        if windows.is_empty() {
+            return provider_details(payload).unwrap_or_else(|| {
+                widget::text::caption("No usage data reported.")
+                    .width(Length::Fill)
+                    .into()
+            });
+        }
         let mut bars = widget::Column::new()
             .spacing(SUMMARY_BAR_SPACING)
             .width(Length::Fill);
-        let mut any = false;
-        if let Some(usage) = &payload.usage {
-            let [primary_label, secondary_label, _] = payload.window_labels();
-            for (window, label, fallback) in [
-                (usage.primary.as_ref(), primary_label, "Session"),
-                (usage.secondary.as_ref(), secondary_label, "Weekly"),
-            ] {
-                let Some(window) = window else { continue };
-                any = true;
-                let label = label
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| window.window_label(fallback));
-                bars = bars.push(self.summary_window(window, label));
-            }
+        for window in windows {
+            bars = bars.push(self.summary_window(window.window, window.label));
         }
-
-        if !any {
-            if let Some(details) = provider_details(payload) {
-                return column.push(details).into();
-            }
-            return column
-                .push(widget::text::caption("No usage data reported.").width(Length::Fill))
-                .into();
-        }
-
-        column.push(bars).into()
+        bars.into()
     }
 
-    /// One bar and its percentage/label line for the Overview tab, kept tight
-    /// enough to read as a single unit.
+    /// One Overview window: its name beside its percentage, over a full-width
+    /// bar, so a name like Antigravity's "Claude and GPT" stays attached to
+    /// its number.
     fn summary_window<'a>(
         &'a self,
         window: &'a RateLimitWindow,
         label: String,
     ) -> Element<'a, Message> {
-        let mut column = widget::Column::new().spacing(2).width(Length::Fill);
-        if let Some(fraction) = window.fraction() {
-            column = column.push(widget::determinate_linear(
-                self.config.usage_display.fraction(fraction),
-            ));
-        }
-        column
+        let mut column = widget::Column::new()
+            .spacing(4)
+            .width(Length::Fill)
             .push(split_row(
+                widget::text::body(label),
                 widget::text::body(self.percent_text(window)),
-                widget::text::caption(label),
-            ))
-            .into()
+            ));
+        if let Some(fraction) = window.fraction() {
+            column = column.push(
+                widget::determinate_linear(self.config.usage_display.fraction(fraction))
+                    .width(Length::Fill),
+            );
+        }
+        column.into()
     }
 
-    /// Usage, pace and credits for one account.
+    /// Usage, pace and credits for one account, below `header`. The
+    /// updated/plan line joins `header` so the two read as one block.
     fn account_detail<'a>(
         &'a self,
         payload: &'a ProviderPayload,
-        name: String,
-        grouped: bool,
+        mut header: widget::Column<'a, Message, cosmic::Theme, Renderer>,
     ) -> Element<'a, Message> {
         let now = Utc::now();
-        let mut title = widget::Row::new().spacing(8).align_y(Vertical::Center);
-        if !grouped && let Some(icon) = provider_glyph(&payload.provider) {
-            title = title.push(glyph(icon, HEADER_ICON_SIZE));
-        }
-        title = title.push(if grouped {
-            widget::text::heading(name)
-        } else {
-            widget::text::title3(name)
-        });
-
-        // The header's two rows belong together, so they are their own column;
-        // the outer spacing is what separates the major blocks.
-        let mut header = widget::Column::new()
-            .spacing(2)
-            .width(Length::Fill)
-            .push(split_row(title, account_caption(payload, &self.config)));
-
-        if !grouped && let Some(status) = service_status(payload) {
-            header = header.push(widget::text::body(status).width(Length::Fill));
-        }
-        let mut column = widget::Column::new().spacing(BLOCK_SPACING).width(Length::Fill);
+        let column = widget::Column::new()
+            .spacing(BLOCK_SPACING)
+            .width(Length::Fill);
 
         if let Some(error) = &payload.error {
             return column
@@ -616,54 +776,30 @@ impl Window {
             widget::text::caption(usage.updated_text(now).unwrap_or_default()),
             widget::text::caption(payload.plan_label().unwrap_or_default()),
         ));
-        column = column.push(header);
+        let mut column = column.push(header);
 
-        let pace = payload.pace.as_ref();
-        let [primary_label, secondary_label, tertiary_label] = payload.window_labels();
-        let windows = [
-            (
-                usage.primary.as_ref(),
-                primary_label,
-                "Session",
-                self.config.show_session,
-                pace.and_then(|p| p.primary.as_ref()),
-            ),
-            (
-                usage.secondary.as_ref(),
-                secondary_label,
-                "Weekly",
-                self.config.show_weekly,
-                pace.and_then(|p| p.secondary.as_ref()),
-            ),
-            (
-                usage.tertiary.as_ref(),
-                tertiary_label,
-                "Monthly",
-                self.config.show_monthly,
-                pace.and_then(|p| p.tertiary.as_ref()),
-            ),
-        ];
-
-        // `any` tracks whether the *data* is present, not whether it is shown,
-        // so hiding every window with the config still leaves the provider
-        // silent rather than claiming nothing was reported. A window the
-        // provider does not report (Codex frequently has no session window) is
-        // simply skipped, never drawn as an empty placeholder.
-        let mut any = false;
-        for (window, label, fallback, show, pace) in windows {
-            let Some(window) = window else { continue };
-            any = true;
-            if show {
-                let label = label
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| window.window_label(fallback));
-                column = column.push(self.window_block(window, pace, label, now));
+        // A window the provider does not report (Codex frequently has no
+        // session window) is simply skipped, never drawn as an empty
+        // placeholder. Hiding every reported window with the config still
+        // leaves the provider silent rather than claiming nothing was reported.
+        let windows = usage_windows(payload);
+        for window in &windows {
+            if self.shows_slot(window.slot) {
+                let pace = payload.pace.as_ref().and_then(|pace| {
+                    [&pace.primary, &pace.secondary, &pace.tertiary][window.slot].as_ref()
+                });
+                column = column.push(self.window_block(
+                    window.window,
+                    pace,
+                    window.label.clone(),
+                    now,
+                ));
             }
         }
 
         if let Some(details) = provider_details(payload) {
             column = column.push(details);
-        } else if !any {
+        } else if windows.is_empty() {
             column = column.push(widget::text::body("No limit windows reported.").width(Length::Fill));
         }
 
@@ -682,6 +818,15 @@ impl Window {
         }
 
         column.into()
+    }
+
+    /// Whether the config shows the window in `slot` on a provider tab.
+    fn shows_slot(&self, slot: usize) -> bool {
+        [
+            self.config.show_session,
+            self.config.show_weekly,
+            self.config.show_monthly,
+        ][slot]
     }
 
     /// Section title opposite the reset countdown, the progress bar, the
@@ -715,9 +860,10 @@ impl Window {
             ));
         if let Some(fraction) = window.fraction() {
             column = column
-                .push(widget::determinate_linear(
-                    self.config.usage_display.fraction(fraction),
-                ))
+                .push(
+                    widget::determinate_linear(self.config.usage_display.fraction(fraction))
+                        .width(Length::Fill),
+                )
                 .push(widget::text::heading(self.percent_text(window)).width(Length::Fill));
         } else {
             column = column
@@ -741,11 +887,25 @@ impl Window {
     /// "20% used" or "80% remaining", per `usage_display`. The word is part of
     /// the line so the active mode never needs a separate banner.
     fn percent_text(&self, window: &RateLimitWindow) -> String {
-        let Some(percent) = window.used_percent.filter(|percent| percent.is_finite()) else {
-            return "Unavailable".to_string();
-        };
-        let percent = self.config.usage_display.percent(percent.clamp(0.0, 100.0));
-        format!("{percent:.0}% {}", self.config.usage_display.label())
+        match self.display_percent(window) {
+            Some(percent) => format!("{percent:.0}% {}", self.config.usage_display.label()),
+            None => "Unavailable".to_string(),
+        }
+    }
+
+    /// "20%" without the mode word, for the collapsed account rows where the
+    /// word would crowd out the account name.
+    fn short_percent(&self, window: &RateLimitWindow) -> String {
+        match self.display_percent(window) {
+            Some(percent) => format!("{percent:.0}%"),
+            None => "?".to_string(),
+        }
+    }
+
+    /// The percentage to print, used or remaining per `usage_display`.
+    fn display_percent(&self, window: &RateLimitWindow) -> Option<f64> {
+        let percent = window.used_percent.filter(|percent| percent.is_finite())?;
+        Some(self.config.usage_display.percent(percent.clamp(0.0, 100.0)))
     }
 
     fn cost_for(&self, provider: &str) -> Option<&CostPayload> {
@@ -936,6 +1096,51 @@ fn group_providers(payloads: &[ProviderPayload]) -> Vec<ProviderGroup<'_>> {
     groups
 }
 
+/// A reported usage window with its display name. `slot` is 0 for primary, 1
+/// for secondary and 2 for tertiary, which config toggles and pace follow.
+struct UsageWindow<'a> {
+    slot: usize,
+    label: String,
+    window: &'a RateLimitWindow,
+}
+
+/// The windows a payload reports, in slot order, named by the CLI's labels or
+/// a fallback derived from the window length.
+fn usage_windows(payload: &ProviderPayload) -> Vec<UsageWindow<'_>> {
+    let Some(usage) = &payload.usage else {
+        return Vec::new();
+    };
+    [
+        (&usage.primary, "Session"),
+        (&usage.secondary, "Weekly"),
+        (&usage.tertiary, "Monthly"),
+    ]
+    .into_iter()
+    .zip(payload.window_labels())
+    .enumerate()
+    .filter_map(|(slot, ((window, fallback), label))| {
+        let window = window.as_ref()?;
+        let label = label
+            .map(str::to_owned)
+            .unwrap_or_else(|| window.window_label(fallback));
+        Some(UsageWindow {
+            slot,
+            label,
+            window,
+        })
+    })
+    .collect()
+}
+
+/// The window nearest its limit, which a collapsed account row summarizes.
+fn tightest<'a>(windows: &[UsageWindow<'a>]) -> Option<&'a RateLimitWindow> {
+    windows
+        .iter()
+        .filter_map(|window| Some((window.window.fraction()?, window.window)))
+        .max_by(|(a, _), (b, _)| a.total_cmp(b))
+        .map(|(_, window)| window)
+}
+
 fn provider_heading<'a>(payload: &ProviderPayload) -> Element<'a, Message> {
     let mut title = widget::Row::new().spacing(8).align_y(Vertical::Center);
     if let Some(icon) = provider_glyph(&payload.provider) {
@@ -1005,8 +1210,8 @@ fn provider_details(payload: &ProviderPayload) -> Option<Element<'_, Message>> {
     any.then(|| column.into())
 }
 
-/// User names take precedence over non-email CLI labels. Numbered fallbacks
-/// distinguish accounts while keeping emails hidden when show_account is off.
+/// An account row's name: a configured label, a non-email CLI label, the
+/// email when `show_account` allows it, or a numbered "Account N".
 fn account_label(payload: &ProviderPayload, index: usize, config: &Config) -> String {
     payload
         .account_text()
@@ -1024,6 +1229,7 @@ fn account_label(payload: &ProviderPayload, index: usize, config: &Config) -> St
                 .as_deref()
                 .filter(|account| !account.contains('@'))
         })
+        .or_else(|| config.show_account.then(|| payload.account_text()).flatten())
         .map(str::trim)
         .filter(|label| !label.is_empty())
         .map(str::to_owned)
@@ -1035,7 +1241,9 @@ fn account_caption<'a>(payload: &'a ProviderPayload, config: &Config) -> Element
         (true, Some(account)) => account.to_string(),
         _ => String::new(),
     };
-    widget::text::caption(account).into()
+    widget::text::caption(account)
+        .ellipsize(ONE_LINE_MIDDLE)
+        .into()
 }
 
 /// "Today" / "30d cost" over their values, then the same for token counts.
@@ -1205,6 +1413,10 @@ mod tests {
         assert_eq!(account_label(&payloads[0], 0, &config), "Virufy");
         assert_eq!(account_label(&payloads[1], 1, &config), "Work");
         assert_eq!(account_label(&payloads[2], 2, &config), "Account 3");
+        assert_eq!(
+            account_label(&payloads[2], 2, &Config::default()),
+            "personal@example.com"
+        );
         assert_eq!(
             layout(account_caption(&payloads[0], &config), f32::INFINITY)
                 .size()
@@ -1390,6 +1602,296 @@ mod tests {
                 .size()
                 .width,
             0.0
+        );
+    }
+
+    /// Usage for two Codex accounts, Claude and Antigravity, with resets
+    /// relative to `now` so countdowns read as they would live.
+    fn sample_payloads(now: DateTime<Utc>) -> Vec<ProviderPayload> {
+        let at = |hours: i64| (now + chrono::Duration::hours(hours)).to_rfc3339();
+        crate::codexbar::parse_usage_json(&format!(
+            r#"[
+            {{"provider":"codex","account":"personal@example.com",
+              "rateWindowLabels":{{"primary":"Session","secondary":"Weekly"}},
+              "pace":{{"secondary":{{"willLastToReset":true,"summary":"7% in reserve | Expected 32% used | Lasts until reset"}}}},
+              "credits":{{"remaining":0}},
+              "usage":{{"identity":{{"accountEmail":"personal@example.com","loginMethod":"plus"}},
+                "updatedAt":"{now}",
+                "primary":{{"usedPercent":3,"windowMinutes":300,"resetsAt":"{h5}"}},
+                "secondary":{{"usedPercent":25,"windowMinutes":10080,"resetsAt":"{h115}"}}}}}},
+            {{"provider":"codex","account":"team@example.org",
+              "rateWindowLabels":{{"primary":"Session","secondary":"Weekly"}},
+              "usage":{{"identity":{{"accountEmail":"team@example.org","loginMethod":"team"}},
+                "updatedAt":"{now}",
+                "secondary":{{"usedPercent":0,"windowMinutes":10080,"resetsAt":"{h167}"}}}}}},
+            {{"provider":"claude",
+              "usage":{{"identity":{{"accountEmail":"personal@example.com"}},"updatedAt":"{now}",
+                "primary":{{"usedPercent":2,"windowMinutes":300,"resetsAt":"{h3}"}},
+                "secondary":{{"usedPercent":28,"windowMinutes":10080,"resetsAt":"{h80}"}}}}}},
+            {{"provider":"antigravity",
+              "rateWindowLabels":{{"primary":"Gemini Models","secondary":"Claude and GPT"}},
+              "usage":{{"identity":{{"accountEmail":"student@example.ac.jp","loginMethod":"Antigravity Starter Quota"}},
+                "updatedAt":"{now}",
+                "primary":{{"usedPercent":0,"resetsAt":"{h167}"}},
+                "secondary":{{"usedPercent":0,"resetsAt":"{h167}"}}}}}}
+        ]"#,
+            now = now.to_rfc3339(),
+            h3 = at(3),
+            h5 = at(5),
+            h80 = at(80),
+            h115 = at(115),
+            h167 = at(167),
+        ))
+        .unwrap()
+    }
+
+    fn sample_window(config: Config) -> Window {
+        Window {
+            core: Core::default(),
+            popup: None,
+            state: State::Loaded(sample_payloads(Utc::now())),
+            refresh: Refresh::default(),
+            costs: crate::codexbar::parse_cost_json(
+                r#"[{"provider":"codex","sessionCostUSD":1.2,"sessionTokens":1200000,
+                     "last30DaysCostUSD":48.5,"last30DaysTokens":96000000}]"#,
+            )
+            .unwrap(),
+            usage_error: None,
+            cost_error: None,
+            tab: Tab::Overview,
+            toggled_accounts: HashSet::new(),
+            config,
+            config_error: None,
+        }
+    }
+
+    /// Draws the popup's content at `width` with the tiny-skia renderer and
+    /// writes it to `path` as a PAM image (`magick x.pam x.png` converts it).
+    fn render(window: &Window, width: f32, cursor: Option<Point>, path: &std::path::Path) {
+        use cosmic::iced::advanced::Layout;
+        use cosmic::iced::advanced::renderer::{Headless, Style};
+        use cosmic::iced::mouse::Cursor;
+
+        let mut element: Element<'_, Message> = padded_control(window.popup_content()).into();
+        let mut tree = Tree::new(element.as_widget());
+        let mut renderer = renderer();
+        let limits = Limits::new(Size::new(width, 0.0), Size::new(width, 2000.0));
+        let node = element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
+        let size = node.size();
+        let theme = cosmic::Theme::dark();
+        let on = theme.cosmic().background(false).on;
+        element.as_widget().draw(
+            &tree,
+            &mut renderer,
+            &theme,
+            &Style {
+                icon_color: on.into(),
+                text_color: on.into(),
+                scale_factor: 1.0,
+            },
+            Layout::new(&node),
+            cursor.map_or(Cursor::Unavailable, Cursor::Available),
+            &Rectangle::with_size(size),
+        );
+        let Renderer::Secondary(renderer) = &mut renderer else {
+            unreachable!("the test renderer is tiny-skia")
+        };
+        let (w, h) = (size.width.ceil() as u32, size.height.ceil() as u32);
+        let background = Color::from(theme.cosmic().background(false).base);
+        let pixels = renderer.screenshot(Size::new(w, h), 1.0, background);
+        let mut file = format!(
+            "P7\nWIDTH {w}\nHEIGHT {h}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n"
+        )
+        .into_bytes();
+        file.extend(pixels);
+        std::fs::write(path, file).unwrap();
+    }
+
+    /// Renders the popup states that matter for review into
+    /// `$CODEXBAR_RENDER_DIR`. Ignored by default because it produces images
+    /// for a person to look at rather than asserting anything:
+    ///
+    /// ```sh
+    /// CODEXBAR_RENDER_DIR=/tmp/render cargo test render_popup_states -- --ignored
+    /// ```
+    #[test]
+    #[ignore]
+    fn render_popup_states() {
+        let dir = std::path::PathBuf::from(
+            std::env::var("CODEXBAR_RENDER_DIR").expect("set CODEXBAR_RENDER_DIR"),
+        );
+        std::fs::create_dir_all(&dir).unwrap();
+        let codex = Tab::Provider("codex".to_string());
+        let toggle = |window: &mut Window, overview: bool, account: &str| {
+            let _ = window.update(Message::ToggleAccount(AccountRow {
+                overview,
+                provider: "codex".to_string(),
+                account: account.to_string(),
+            }));
+        };
+
+        let mut window = sample_window(Config::default());
+        // Over the first Codex account row, to show its hover highlight.
+        render(
+            &window,
+            420.0,
+            Some(Point::new(150.0, 125.0)),
+            &dir.join("overview-hover.pam"),
+        );
+        for width in [320.0, 420.0] {
+            render(&window, width, None, &dir.join(format!("overview-{width}.pam")));
+        }
+        toggle(&mut window, true, "team@example.org");
+        render(&window, 420.0, None, &dir.join("overview-team-open.pam"));
+
+        window.tab = codex.clone();
+        render(&window, 420.0, None, &dir.join("codex.pam"));
+        render(&window, 320.0, None, &dir.join("codex-320.pam"));
+        toggle(&mut window, false, "personal@example.com");
+        toggle(&mut window, false, "team@example.org");
+        render(&window, 420.0, None, &dir.join("codex-team-open.pam"));
+        // Both accounts open overflows the body, so it scrolls.
+        toggle(&mut window, false, "personal@example.com");
+        render(&window, 420.0, None, &dir.join("codex-both-open.pam"));
+
+        window.tab = Tab::Provider("antigravity".to_string());
+        render(&window, 420.0, None, &dir.join("antigravity.pam"));
+
+        let mut private = sample_window(Config {
+            show_account: false,
+            usage_display: crate::config::UsageDisplay::Remaining,
+            ..Config::default()
+        });
+        render(&private, 320.0, None, &dir.join("overview-private-remaining.pam"));
+        private.tab = codex;
+        render(&private, 320.0, None, &dir.join("codex-private-remaining.pam"));
+    }
+
+    /// Sends a left click at the centre of `element`, laid out at `width`, and
+    /// returns what it published - the same path a real click takes.
+    fn click(element: Element<'_, Message>, width: f32) -> Vec<Message> {
+        use cosmic::iced::advanced::{Layout, Shell, clipboard};
+        use cosmic::iced::{Event, mouse};
+
+        let mut element = element;
+        let mut tree = Tree::new(element.as_widget());
+        let renderer = renderer();
+        let limits = Limits::NONE.max_width(width).width(Length::Shrink);
+        let node = element
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &limits);
+        let bounds = Rectangle::with_size(node.size());
+        let cursor = mouse::Cursor::Available(bounds.center());
+        let mut messages = Vec::new();
+        for event in [
+            mouse::Event::CursorMoved {
+                position: bounds.center(),
+            },
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            element.as_widget_mut().update(
+                &mut tree,
+                &Event::Mouse(event),
+                Layout::new(&node),
+                cursor,
+                &renderer,
+                &mut clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &bounds,
+            );
+        }
+        messages
+    }
+
+    fn codex_row(window: &Window, index: usize, overview: bool) -> AccountRow {
+        let State::Loaded(payloads) = &window.state else {
+            unreachable!()
+        };
+        AccountRow::new(&payloads[index], index, overview)
+    }
+
+    #[test]
+    fn clicking_an_account_row_toggles_it() {
+        let mut window = sample_window(Config::default());
+        let row = codex_row(&window, 1, true);
+        let messages = {
+            let State::Loaded(payloads) = &window.state else {
+                unreachable!()
+            };
+            click(
+                window.account_row(&payloads[1], 1, row.clone()),
+                narrowest_block(),
+            )
+        };
+        assert!(
+            matches!(messages.as_slice(), [Message::ToggleAccount(clicked)] if *clicked == row),
+            "{messages:?}"
+        );
+
+        assert!(!window.is_open(&row, 1));
+        for message in messages {
+            let _ = window.update(message);
+        }
+        assert!(window.is_open(&row, 1));
+        let _ = window.update(Message::ToggleAccount(row.clone()));
+        assert!(!window.is_open(&row, 1));
+    }
+
+    /// Provider tabs open their first account and Overview starts collapsed,
+    /// and opening an account in one view leaves the other view alone.
+    #[test]
+    fn account_rows_open_independently_per_view() {
+        let mut window = sample_window(Config::default());
+        let rows = [
+            codex_row(&window, 0, true),
+            codex_row(&window, 1, true),
+            codex_row(&window, 0, false),
+            codex_row(&window, 1, false),
+        ];
+        let open = |window: &Window| {
+            [(0, 0), (1, 1), (2, 0), (3, 1)].map(|(row, index)| window.is_open(&rows[row], index))
+        };
+        assert_eq!(open(&window), [false, false, true, false]);
+
+        let _ = window.update(Message::ToggleAccount(rows[1].clone()));
+        assert_eq!(open(&window), [false, true, true, false]);
+        let _ = window.update(Message::ToggleAccount(rows[2].clone()));
+        assert_eq!(open(&window), [false, true, false, false]);
+    }
+
+    #[test]
+    fn collapsed_rows_summarize_the_tightest_window() {
+        let window = sample_window(Config::default());
+        let State::Loaded(payloads) = &window.state else {
+            unreachable!()
+        };
+        let personal = usage_windows(&payloads[0]);
+        assert_eq!(tightest(&personal).and_then(|w| w.used_percent), Some(25.0));
+        assert_eq!(
+            window.collapsed_lines(&payloads[0], &personal, true),
+            ["Session 3% · Weekly 25%"]
+        );
+        let tab = window.collapsed_lines(&payloads[0], &personal, false);
+        assert_eq!(tab.len(), 2);
+        assert!(tab[1].starts_with("Weekly 25% used · Resets in 4d"), "{tab:?}");
+
+        // A window without a percentage is never the tightest, and an account
+        // whose fetch failed says why instead of listing windows.
+        let payloads = crate::codexbar::parse_usage_json(
+            r#"[{"provider":"codex","usage":{
+                "primary":{"windowMinutes":300},
+                "secondary":{"usedPercent":40,"windowMinutes":10080}}},
+            {"provider":"codex","error":{"message":"Token expired"}}]"#,
+        )
+        .unwrap();
+        let windows = usage_windows(&payloads[0]);
+        assert_eq!(tightest(&windows).and_then(|w| w.used_percent), Some(40.0));
+        assert_eq!(
+            window.collapsed_lines(&payloads[1], &usage_windows(&payloads[1]), true),
+            ["Token expired"]
         );
     }
 

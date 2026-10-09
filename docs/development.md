@@ -6,6 +6,17 @@ Build a release binary with `just build-release`. Run the Rust tests with `just 
 python3 -m unittest discover -s tools/tests -p 'test_*.py'
 ```
 
+## Rendering the popup
+
+`render_popup_states` in `src/window.rs` draws the popup offscreen with sample accounts and writes PAM images for review. It covers Overview, a provider tab, expanded and hovered account rows, a scrolling body, both popup widths, and hidden emails with remaining-quota display. It is ignored by default:
+
+```sh
+CODEXBAR_RENDER_DIR=/tmp/render cargo test render_popup_states -- --ignored
+magick /tmp/render/overview-420.pam overview.png
+```
+
+Progress bars animate from zero, so they render empty in these still images.
+
 ## Provider icons
 
 The applet creates tabs for provider IDs returned by CodexBar. Its logos are SVG files copied into `data/icons/providers/` and embedded in the binary. Providers without an icon get a text label.

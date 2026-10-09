@@ -1,6 +1,6 @@
 # cosmic-ext-applet-codexbar
 
-A COSMIC panel applet that displays usage limits reported by the [CodexBar CLI](https://github.com/steipete/CodexBar). Each provider gets a tab. The Overview tab summarizes providers, and accounts for the same provider stack together. The applet refreshes every 60 seconds and when its popup opens.
+A COSMIC panel applet that displays usage limits reported by the [CodexBar CLI](https://github.com/steipete/CodexBar). Each provider gets a tab. The Overview tab summarizes providers. A provider with several accounts lists each as a row you can expand. The applet refreshes every 60 seconds and when its popup opens.
 
 This is a third-party project. It is not official COSMIC software and is not endorsed by System76. See the [trademark notice](docs/install.md#trademarks) and [license information](docs/install.md#license).
 
@@ -22,8 +22,8 @@ The applet reloads the file when the popup opens and every 60 seconds. All setti
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| `show_account` | `true` | Set to `false` to hide account email captions in Overview and provider tabs. |
-| `account_labels` | `{}` | Name account sections by mapping a CLI email or account label to a name, such as `{ "personal@example.com" = "Personal" }`. Names remain visible when email captions are hidden. |
+| `show_account` | `true` | Set to `false` to hide account emails in Overview and provider tabs. Unnamed accounts become "Account 1", "Account 2", and so on. |
+| `account_labels` | `{}` | Name account rows by mapping a CLI email or account label to a name, such as `{ "personal@example.com" = "Personal" }`. Names remain visible when email captions are hidden. |
 | `usage_display` | `"used"` | Show quota consumed with `"used"` or quota left with `"remaining"`. |
 | `show_session` | `true` | Show the shortest usage window. |
 | `show_weekly` | `true` | Show the second usage window, normally weekly. |
