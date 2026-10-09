@@ -48,7 +48,7 @@ flatpak run --filesystem=host --share=network \
     build io.github.andrew_verde.cosmic-ext-applet-codexbar.json
 
 flatpak build-export .flatpak-builder/cache build master
-flatpak install --user --reinstall .flatpak-builder/cache \
+flatpak install --user --reinstall "$PWD/.flatpak-builder/cache" \
     io.github.andrew_verde.cosmic-ext-applet-codexbar
 ```
 
