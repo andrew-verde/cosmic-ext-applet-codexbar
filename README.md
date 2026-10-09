@@ -10,15 +10,32 @@ This is a third-party project. It is not official COSMIC software and is not end
 
 Install the COSMIC desktop, Rust, `just`, and the CodexBar CLI. Follow the [build and installation guide](docs/install.md). See [account and display settings](docs/configuration.md) to configure the applet.
 
-## Privacy
+## Configuration
 
-To hide account email captions while recording or streaming, set this in `~/.config/cosmic-ext-applet-codexbar/config.toml`:
+Edit `~/.config/cosmic-ext-applet-codexbar/config.toml`. To hide account email captions while recording or streaming:
 
 ```toml
 show_account = false
 ```
 
-This hides account captions in both the Overview and provider tabs. Multiple accounts keep their configured names or numbered headings such as "Account 1". Use names without personal information in `account_labels`. Custom labels and provider messages or detail rows can still contain personal information. See [configuration](docs/configuration.md).
+The applet reloads the file when the popup opens and every 60 seconds. All settings are optional.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `show_account` | `true` | Set to `false` to hide account email captions in Overview and provider tabs. |
+| `account_labels` | `{}` | Name account sections by mapping a CLI email or account label to a name, such as `{ "personal@example.com" = "Personal" }`. Names remain visible when email captions are hidden. |
+| `usage_display` | `"used"` | Show quota consumed with `"used"` or quota left with `"remaining"`. |
+| `show_session` | `true` | Show the shortest usage window. |
+| `show_weekly` | `true` | Show the second usage window, normally weekly. |
+| `show_monthly` | `true` | Show the third usage window, normally monthly. |
+| `show_reset_countdown` | `true` | Show the time until each window resets. |
+| `show_pace` | `true` | Show pace projections when reported. |
+| `show_cost` | `true` | Show local cost and token counts when reported. |
+| `show_reset_credits` | `true` | Show available Codex limit-reset credits. |
+| `show_credits` | `true` | Show remaining provider credits. |
+| `background_opacity` | Unset | Follow the COSMIC theme, or set a value from `0.0` to `1.0` to override popup opacity. |
+
+Email hiding applies to account captions. Custom labels and provider messages or detail rows can still contain personal information. See the [configuration guide](docs/configuration.md) for file paths, defaults, and multiple-account setup.
 
 ## Documentation
 
