@@ -7,7 +7,9 @@ codexbar usage --format json
 codexbar cost --format json --days 30
 ```
 
-CodexBar must be installed on the host. If the command is missing, fails, or reports a provider error, the popup shows an error. A failed cost query does not clear usage data. Providers without cost data have no cost block.
+CodexBar must be installed on the host. The applet runs one refresh at a time, including both usage and cost queries. Each command has a 30-second timeout, and the full usage fetch has a 45-second limit.
+
+If an initial query fails, the popup shows an error. Later command failures preserve the last successful data. Provider errors returned in a successful payload still appear for that provider. Providers without cost data have no cost block.
 
 ## Usage payload
 
@@ -21,6 +23,8 @@ The displayed fields are:
 - `usage.identity.loginMethod` and `usage.identity.accountEmail`.
 - `usage.codexResetCredits.credits`, including each credit's `status` and `expires_at`.
 - `pace.primary`, `.secondary`, and `.tertiary`; `credits.remaining`; and `error.message`.
+
+The parser also accepts optional `status` fields and text rows in `usage.details`. It ignores detail charts and progress metadata. Their display is being added separately.
 
 The account caption uses `usage.identity.accountEmail`, falling back to the top-level `account` field. CodexBar fills `account` when it queries multiple accounts.
 

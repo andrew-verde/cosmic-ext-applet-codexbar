@@ -8,8 +8,6 @@ This is a third-party project. It is not official COSMIC software and is not end
 
 ![Overview tab showing provider usage summaries](docs/screenshot-overview.png)
 
-The applet runs `codexbar usage` and `codexbar cost` on the host, then displays the returned data. It does not connect to providers directly. See [how it works and the data format](docs/data-format.md).
-
 Install the COSMIC desktop, Rust, `just`, and the CodexBar CLI. Follow the [build and installation guide](docs/install.md). See [account and display settings](docs/configuration.md) to configure the applet.
 
 ## Documentation
