@@ -4,3 +4,4 @@ vendor.tar
 /.cargo
 /flatpak/build
 /flatpak/.flatpak-builder
+__pycache__/

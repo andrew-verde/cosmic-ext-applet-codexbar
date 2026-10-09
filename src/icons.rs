@@ -106,6 +106,7 @@ const PROVIDER_ICONS: &[(&str, &[u8])] = &[
     ("windsurf", include_bytes!("../data/icons/providers/windsurf.svg")),
     ("workbuddy", include_bytes!("../data/icons/providers/workbuddy.svg")),
     ("xai", include_bytes!("../data/icons/providers/xai.svg")),
+    ("xapi", include_bytes!("../data/icons/providers/xapi.svg")),
     ("xkiro", include_bytes!("../data/icons/providers/xkiro.svg")),
     ("zai", include_bytes!("../data/icons/providers/zai.svg")),
     ("zed", include_bytes!("../data/icons/providers/zed.svg")),

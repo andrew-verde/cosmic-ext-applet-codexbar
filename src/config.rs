@@ -11,6 +11,7 @@
 //! [`load`] is called on every refresh tick rather than only at startup, so
 //! edits apply within one poll interval without restarting the applet.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Deserializer};
@@ -65,6 +66,10 @@ show_credits = true
 # Show the account (usually an email address) next to the provider name.
 show_account = true
 
+# Optional names for stacked accounts, keyed by the email or account label
+# reported by CodexBar. Names remain visible when show_account is false.
+# account_labels = { "personal@example.com" = "Personal", "team@example.com" = "Virufy" }
+
 # Whether percentages and progress bars report quota consumed ("used", the
 # default) or quota left ("remaining"). The popup always labels which mode is
 # active. An unrecognised value falls back to "used".
@@ -101,6 +106,8 @@ pub struct Config {
     pub show_credits: bool,
     /// Show the account caption in the provider header.
     pub show_account: bool,
+    /// Optional names for account sections, keyed by email or CLI account label.
+    pub account_labels: BTreeMap<String, String>,
     /// Report quota consumed or quota left.
     #[serde(deserialize_with = "deserialize_usage_display")]
     pub usage_display: UsageDisplay,
@@ -171,6 +178,7 @@ impl Default for Config {
             show_reset_credits: true,
             show_credits: true,
             show_account: true,
+            account_labels: BTreeMap::new(),
             usage_display: UsageDisplay::Used,
             background_opacity: None,
         }

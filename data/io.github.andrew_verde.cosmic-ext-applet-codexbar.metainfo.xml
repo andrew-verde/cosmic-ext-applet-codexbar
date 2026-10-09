@@ -18,7 +18,8 @@
     </p>
     <p>
       Clicking the panel icon opens a popup with a tab per provider, plus an
-      Overview tab that condenses every provider to one line. A provider's tab
+      Overview tab that summarizes every provider. Providers with several
+      accounts list each account as a row you can expand. A provider's tab
       shows session, weekly and monthly usage as a percentage and a progress
       bar, when each limit window resets, the pace projection, today's and the
       last 30 days' cost and token counts, redeemable limit-reset credit, and
@@ -72,6 +73,20 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.2.0" date="2026-10-09">
+      <description>
+        <ul>
+          <li>Multiple accounts for one provider appear as rows you can expand, with a small bar for each account's most-used limit.</li>
+          <li>Accounts can be given names with the account_labels setting.</li>
+          <li>Progress bars span the full popup width, and window names sit beside their percentages.</li>
+          <li>The scrollbar no longer covers text on the right edge.</li>
+          <li>Long emails are shortened instead of overlapping other text.</li>
+          <li>Provider service incidents, detail rows and unavailable quotas are shown.</li>
+          <li>Refreshes no longer overlap, and slow CLI calls time out.</li>
+          <li>Provider icons are synced with CodexBar.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-08-08">
       <description>
         <p>First release.</p>
