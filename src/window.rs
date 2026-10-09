@@ -73,8 +73,8 @@ pub enum Message {
     TogglePopup,
     PopupClosed(Id),
     Refresh,
-    UsageFetched(Result<Vec<ProviderPayload>, String>),
-    CostFetched(Result<Vec<CostPayload>, String>),
+    UsageFetched(u64, Result<Vec<ProviderPayload>, String>),
+    CostFetched(u64, Result<Vec<CostPayload>, String>),
     TabSelected(Tab),
 }
 
@@ -93,12 +93,63 @@ enum State {
     Failed(String),
 }
 
+impl State {
+    fn apply_usage(&mut self, result: Result<Vec<ProviderPayload>, String>) {
+        match result {
+            Ok(payloads) => *self = Self::Loaded(payloads),
+            // A transient failure should not erase the last successful usage.
+            Err(error) if !matches!(self, Self::Loaded(_)) => *self = Self::Failed(error),
+            Err(_) => {}
+        }
+    }
+}
+
+/// A refresh owns both CLI results until they finish, including failures.
+#[derive(Default)]
+struct Refresh {
+    generation: u64,
+    usage_pending: bool,
+    cost_pending: bool,
+}
+
+impl Refresh {
+    fn start(&mut self) -> Option<u64> {
+        if self.usage_pending || self.cost_pending {
+            return None;
+        }
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("refresh generation overflow");
+        self.usage_pending = true;
+        self.cost_pending = true;
+        Some(self.generation)
+    }
+
+    fn complete_usage(&mut self, generation: u64) -> bool {
+        if generation != self.generation || !self.usage_pending {
+            return false;
+        }
+        self.usage_pending = false;
+        true
+    }
+
+    fn complete_cost(&mut self, generation: u64) -> bool {
+        if generation != self.generation || !self.cost_pending {
+            return false;
+        }
+        self.cost_pending = false;
+        true
+    }
+}
+
 pub struct Window {
     core: Core,
     popup: Option<Id>,
     state: State,
-    /// Cost data, keyed by provider id. Empty when the `cost` subcommand is
-    /// unavailable or reports nothing, which only hides the cost block.
+    refresh: Refresh,
+    /// Last successful cost data, keyed by provider id. Empty until the first
+    /// successful response, or when that response reports nothing.
     costs: Vec<CostPayload>,
     tab: Tab,
     config: Config,
@@ -123,16 +174,18 @@ impl Application for Window {
 
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Action<Message>>) {
         let (config, config_error) = crate::config::load();
-        let window = Window {
+        let mut window = Window {
             core,
             popup: None,
             state: State::Loading,
+            refresh: Refresh::default(),
             costs: Vec::new(),
             tab: Tab::Overview,
             config,
             config_error,
         };
-        (window, refresh_task())
+        let task = window.start_refresh();
+        (window, task)
     }
 
     fn on_close_requested(&self, id: Id) -> Option<Message> {
@@ -163,7 +216,7 @@ impl Application for Window {
                     .get_popup_settings(parent, new_id, None, None, None);
                 popup_settings.positioner.size_limits = popup_limits();
                 return Task::batch([
-                    refresh_task(),
+                    self.start_refresh(),
                     get_popup(popup_settings),
                     blur_popup(new_id),
                 ]);
@@ -175,21 +228,28 @@ impl Application for Window {
             }
             Message::Refresh => {
                 self.reload_config();
-                return refresh_task();
+                return self.start_refresh();
             }
-            Message::UsageFetched(Ok(payloads)) => {
+            Message::UsageFetched(generation, result) => {
+                if !self.refresh.complete_usage(generation) {
+                    return Task::none();
+                }
                 // Fall back to Overview when the selected provider disappears.
-                if let Tab::Provider(provider) = &self.tab
+                if let Ok(payloads) = &result
+                    && let Tab::Provider(provider) = &self.tab
                     && !payloads.iter().any(|p| &p.provider == provider)
                 {
                     self.tab = Tab::Overview;
                 }
-                self.state = State::Loaded(payloads);
+                self.state.apply_usage(result);
             }
-            Message::UsageFetched(Err(error)) => self.state = State::Failed(error),
-            // Cost is supplementary: a failure just leaves the block out.
-            Message::CostFetched(Ok(costs)) => self.costs = costs,
-            Message::CostFetched(Err(_)) => self.costs.clear(),
+            Message::CostFetched(generation, result) => {
+                if self.refresh.complete_cost(generation)
+                    && let Ok(costs) = result
+                {
+                    self.costs = costs;
+                }
+            }
             Message::TabSelected(tab) => self.tab = tab,
         }
         Task::none()
@@ -271,6 +331,13 @@ impl Application for Window {
 }
 
 impl Window {
+    fn start_refresh(&mut self) -> Task<Action<Message>> {
+        self.refresh
+            .start()
+            .map(refresh_task)
+            .unwrap_or_else(Task::none)
+    }
+
     fn reload_config(&mut self) {
         let (config, config_error) = crate::config::load();
         self.config = config;
@@ -718,12 +785,14 @@ fn blur_popup(id: Id) -> Task<Action<Message>> {
     .discard()
 }
 
-fn refresh_task() -> Task<Action<Message>> {
+fn refresh_task(generation: u64) -> Task<Action<Message>> {
     Task::batch([
-        Task::perform(fetch_usage(), |result| {
-            Message::UsageFetched(result).into()
+        Task::perform(fetch_usage(), move |result| {
+            Message::UsageFetched(generation, result).into()
         }),
-        Task::perform(fetch_cost(), |result| Message::CostFetched(result).into()),
+        Task::perform(fetch_cost(), move |result| {
+            Message::CostFetched(generation, result).into()
+        }),
     ])
 }
 
@@ -890,6 +959,41 @@ mod tests {
     use cosmic::iced::Pixels;
     use cosmic::iced::advanced::layout::{Limits, Node};
     use cosmic::iced::advanced::widget::Tree;
+
+    #[test]
+    fn refresh_gates_overlap_and_rejects_old_or_duplicate_results() {
+        let mut refresh = Refresh::default();
+        let first = refresh.start().unwrap();
+        assert_eq!(refresh.start(), None);
+        assert!(refresh.complete_usage(first));
+        assert!(!refresh.complete_usage(first));
+        assert_eq!(refresh.start(), None);
+        assert!(refresh.complete_cost(first));
+
+        let second = refresh.start().unwrap();
+        assert_ne!(first, second);
+        assert!(!refresh.complete_usage(first));
+        assert!(!refresh.complete_cost(first));
+        assert_eq!(refresh.start(), None);
+        assert!(refresh.complete_cost(second));
+        assert_eq!(refresh.start(), None);
+        assert!(refresh.complete_usage(second));
+        assert!(refresh.start().is_some());
+    }
+
+    #[test]
+    fn failed_usage_retains_successful_data_and_initial_failure_can_recover() {
+        let mut state = State::Loading;
+        state.apply_usage(Err("unavailable".into()));
+        assert!(matches!(&state, State::Failed(error) if error == "unavailable"));
+        let payloads = crate::codexbar::parse_usage_json(r#"[{"provider":"codex"}]"#).unwrap();
+        state.apply_usage(Ok(payloads));
+        state.apply_usage(Err("timed out".into()));
+        assert!(matches!(&state, State::Loaded(payloads) if payloads.len() == 1));
+        // A successful empty response still reflects provider removal.
+        state.apply_usage(Ok(Vec::new()));
+        assert!(matches!(&state, State::Loaded(payloads) if payloads.is_empty()));
+    }
 
     #[test]
     fn groups_interleaved_accounts_in_provider_order() {

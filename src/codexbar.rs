@@ -37,6 +37,7 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -45,6 +46,10 @@ use serde::Deserialize;
 /// argument list - inside a Flatpak, wrapped in `flatpak-spawn --host`.
 /// Provider IDs are passed as separate arguments, never through a shell.
 const PROGRAM: &str = "codexbar";
+const CLI_TIMEOUT: Duration = Duration::from_secs(30);
+const HOST_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+// Account expansion may invoke the CLI repeatedly. Bound the whole fetch too.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// One entry of the `codexbar usage --format json` array.
 #[derive(Debug, Clone, Deserialize)]
@@ -563,6 +568,12 @@ pub fn parse_usage_json(stdout: &str) -> Result<Vec<ProviderPayload>, String> {
 /// payload carrying the `error` field, so a parseable stdout always wins over
 /// the exit status.
 pub async fn fetch_usage() -> Result<Vec<ProviderPayload>, String> {
+    tokio::time::timeout(FETCH_TIMEOUT, fetch_usage_inner())
+        .await
+        .map_err(|_| "codexbar usage refresh timed out after 45 seconds".to_string())?
+}
+
+async fn fetch_usage_inner() -> Result<Vec<ProviderPayload>, String> {
     let (usage, config) = tokio::join!(
         run_codexbar(&["usage", "--format", "json"]),
         run_codexbar(&["config", "dump"]),
@@ -674,7 +685,12 @@ pub fn parse_cost_json(stdout: &str) -> Result<Vec<CostPayload>, String> {
 /// second, which is what makes this safe to call on the same 60s tick as
 /// [`fetch_usage`].
 pub async fn fetch_cost() -> Result<Vec<CostPayload>, String> {
-    let output = run_codexbar(&["cost", "--format", "json", "--days", "30"]).await?;
+    let output = tokio::time::timeout(
+        FETCH_TIMEOUT,
+        run_codexbar(&["cost", "--format", "json", "--days", "30"]),
+    )
+    .await
+    .map_err(|_| "codexbar cost refresh timed out after 45 seconds".to_string())??;
     parse_output(&output, parse_cost_json)
 }
 
@@ -747,11 +763,13 @@ async fn run_codexbar(args: &[&str]) -> Result<std::process::Output, String> {
         Err("codexbar CLI not found on the host's PATH, in ~/.local/bin, or in Homebrew's \
              bin dir.\nThe applet is sandboxed and runs it on the host, so install it there \
              from github.com/steipete/CodexBar."
-            .to_string())
+                .to_string(),
+        )
     } else {
         Err("codexbar CLI not found on PATH, in ~/.local/bin, or in Homebrew's bin dir.\n\
              Install it from github.com/steipete/CodexBar."
-            .to_string())
+                .to_string(),
+        )
     }
 }
 
@@ -771,12 +789,25 @@ async fn run_cli(
 ) -> std::io::Result<std::process::Output> {
     let mut command = if sandboxed {
         let mut command = tokio::process::Command::new("flatpak-spawn");
-        command.arg("--host").arg(program);
+        command.arg("--host").arg("--watch-bus").arg(program);
         command
     } else {
         tokio::process::Command::new(program)
     };
-    command.args(args).stdin(Stdio::null()).output().await
+    command.args(args);
+    command_output(&mut command, CLI_TIMEOUT).await
+}
+
+/// Dropping a timed-out or cancelled output future kills the child. Flatpak's
+/// --watch-bus propagates flatpak-spawn exiting to the command on the host.
+async fn command_output(
+    command: &mut tokio::process::Command,
+    timeout: Duration,
+) -> std::io::Result<std::process::Output> {
+    command.stdin(Stdio::null()).kill_on_drop(true);
+    tokio::time::timeout(timeout, command.output())
+        .await
+        .map_err(|_| std::io::Error::new(ErrorKind::TimedOut, "CLI process timed out"))?
 }
 
 /// Whether the host can run `candidate`, asked before spawning it for real.
@@ -797,15 +828,16 @@ async fn run_cli(
 /// conflates an unresolvable candidate with the portal being unavailable, so a
 /// broken portal reports the CLI as missing rather than as unreachable.
 async fn resolves_on_host(candidate: &Path) -> bool {
-    tokio::process::Command::new("flatpak-spawn")
+    let mut command = tokio::process::Command::new("flatpak-spawn");
+    command
         .arg("--host")
+        .arg("--watch-bus")
         .arg("/bin/sh")
         .arg("-c")
         .arg(r#"command -v "$1""#)
         .arg("sh")
-        .arg(candidate)
-        .stdin(Stdio::null())
-        .output()
+        .arg(candidate);
+    command_output(&mut command, HOST_PROBE_TIMEOUT)
         .await
         .is_ok_and(|output| output.status.success())
 }
@@ -832,6 +864,42 @@ fn fallback_candidates() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn timeout_kills_child_and_next_command_succeeds() {
+        let pid_file = std::env::temp_dir().join(format!(
+            "codexbar-timeout-test-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap(),
+        ));
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command
+            .args(["-c", r#"echo $$ > "$1"; exec sleep 60"#, "sh"])
+            .arg(&pid_file);
+        let error = command_output(&mut command, Duration::from_millis(500))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::TimedOut);
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        std::fs::remove_file(pid_file).unwrap();
+        let proc_path = PathBuf::from(format!("/proc/{}", pid.trim()));
+        // Tokio reaps killed children asynchronously.
+        for _ in 0..20 {
+            if !proc_path.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(!proc_path.exists(), "timed-out child is still running");
+
+        let output = command_output(
+            &mut tokio::process::Command::new("/bin/true"),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        assert!(output.status.success());
+    }
 
     #[test]
     fn expands_only_enabled_multi_account_providers_and_codex() {
