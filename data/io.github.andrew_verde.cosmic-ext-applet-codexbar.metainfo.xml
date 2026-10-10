@@ -73,6 +73,15 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.2.1" date="2026-10-10">
+      <description>
+        <ul>
+          <li>A settings button opens the config file in the default text editor.</li>
+          <li>The tab scrollbar no longer covers tab names when tabs overflow.</li>
+          <li>The account_labels setting is removed. Accounts are named by email, or numbered when emails are hidden.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-10-09">
       <description>
         <ul>
