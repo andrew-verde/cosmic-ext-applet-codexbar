@@ -57,6 +57,10 @@ const HEADER_ICON_SIZE: u16 = 24;
 /// beyond this crate's.
 const OVERVIEW_ICON: &[u8] = include_bytes!("../data/icons/overview-symbolic.svg");
 
+/// Gear for the settings button. Original artwork like [`OVERVIEW_ICON`],
+/// vendored so it does not depend on the icon themes the sandbox can see.
+const SETTINGS_ICON: &[u8] = include_bytes!("../data/icons/settings-symbolic.svg");
+
 /// Gap between the major blocks of a provider's tab (header, each rate limit
 /// window, cost). The macOS app leans on whitespace to separate these.
 const BLOCK_SPACING: u16 = 14;
@@ -101,6 +105,7 @@ pub enum Message {
     CostFetched(u64, Result<Vec<CostPayload>, String>),
     TabSelected(Tab),
     ToggleAccount(AccountRow),
+    EditConfig,
 }
 
 /// Which page of the popup is showing.
@@ -313,6 +318,12 @@ impl Application for Window {
                     self.toggled_accounts.insert(row);
                 }
             }
+            Message::EditConfig => {
+                crate::config::open_in_editor();
+                if let Some(popup) = self.popup.take() {
+                    return destroy_popup(popup);
+                }
+            }
         }
         Task::none()
     }
@@ -380,12 +391,23 @@ impl Window {
         // The tab strip stays put while only the body scrolls, and the body is
         // capped so long provider lists scroll instead of growing the popup
         // past `popup_limits`'s max height (where they would be clipped).
-        let mut content = widget::Column::new().spacing(8);
-        if let State::Loaded(payloads) = &self.state
-            && !payloads.is_empty()
-        {
-            content = content.push(self.tab_strip(payloads));
-        }
+        // The settings button keeps its corner even while loading or failed,
+        // since a broken config is one reason to reach for it.
+        let tabs: Element<'_, Message> = match &self.state {
+            State::Loaded(payloads) if !payloads.is_empty() => self.tab_strip(payloads),
+            _ => widget::Space::new().width(Length::Fill).into(),
+        };
+        let settings = widget::button::icon(
+            widget::icon::from_svg_bytes(SETTINGS_ICON).symbolic(true),
+        )
+        .on_press(Message::EditConfig);
+        let mut content = widget::Column::new().spacing(8).push(
+            widget::Row::new()
+                .spacing(4)
+                .align_y(Vertical::Center)
+                .push(widget::container(tabs).width(Length::Fill))
+                .push(settings),
+        );
         let mut notices = widget::Column::new().spacing(8);
         if self.usage_error.is_some() && matches!(self.state, State::Loaded(_)) {
             notices = notices.push(widget::text::caption(
@@ -448,7 +470,11 @@ impl Window {
                 Tab::Provider(payload.provider.clone()),
             ));
         }
-        widget::scrollable::horizontal(row).into()
+        // Embedded like the body's scrollbar, so an overflowing strip grows a
+        // gutter instead of drawing the bar across the tab names.
+        widget::scrollable::horizontal(row)
+            .spacing(SCROLLBAR_SPACING)
+            .into()
     }
 
     /// One tab: the provider's icon over its name, or name-only when no icon is
@@ -1210,25 +1236,13 @@ fn provider_details(payload: &ProviderPayload) -> Option<Element<'_, Message>> {
     any.then(|| column.into())
 }
 
-/// An account row's name: a configured label, a non-email CLI label, the
-/// email when `show_account` allows it, or a numbered "Account N".
+/// An account row's name: a non-email CLI label, the email when
+/// `show_account` allows it, or a numbered "Account N".
 fn account_label(payload: &ProviderPayload, index: usize, config: &Config) -> String {
     payload
-        .account_text()
-        .and_then(|account| config.account_labels.get(account))
-        .or_else(|| {
-            payload
-                .account
-                .as_ref()
-                .and_then(|account| config.account_labels.get(account))
-        })
-        .map(String::as_str)
-        .or_else(|| {
-            payload
-                .account
-                .as_deref()
-                .filter(|account| !account.contains('@'))
-        })
+        .account
+        .as_deref()
+        .filter(|account| !account.contains('@'))
         .or_else(|| config.show_account.then(|| payload.account_text()).flatten())
         .map(str::trim)
         .filter(|label| !label.is_empty())
@@ -1394,7 +1408,7 @@ mod tests {
     }
 
     #[test]
-    fn uses_configured_account_names_without_exposing_email_in_fallbacks() {
+    fn numbers_accounts_without_exposing_email_when_hidden() {
         let payloads = crate::codexbar::parse_usage_json(
             r#"[
             {"provider":"codex","account":"team@example.com","usage":{"identity":{"accountEmail":"identity@example.com"}}},
@@ -1406,11 +1420,10 @@ mod tests {
         let config = crate::config::parse_config(
             r#"
             show_account = false
-            account_labels = { "identity@example.com" = "Virufy" }
         "#,
         )
         .unwrap();
-        assert_eq!(account_label(&payloads[0], 0, &config), "Virufy");
+        assert_eq!(account_label(&payloads[0], 0, &config), "Account 1");
         assert_eq!(account_label(&payloads[1], 1, &config), "Work");
         assert_eq!(account_label(&payloads[2], 2, &config), "Account 3");
         assert_eq!(
