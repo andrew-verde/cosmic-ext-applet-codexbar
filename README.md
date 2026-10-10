@@ -12,7 +12,7 @@ Install the COSMIC desktop, Rust, `just`, and the CodexBar CLI. Follow the [buil
 
 ## Configuration
 
-Edit `~/.config/cosmic-ext-applet-codexbar/config.toml`. To hide account email captions while recording or streaming:
+Click the gear in the popup to open `~/.config/cosmic-ext-applet-codexbar/config.toml` in your default editor. To hide account email captions while recording or streaming:
 
 ```toml
 show_account = false
@@ -23,7 +23,6 @@ The applet reloads the file when the popup opens and every 60 seconds. All setti
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `show_account` | `true` | Set to `false` to hide account emails in Overview and provider tabs. Unnamed accounts become "Account 1", "Account 2", and so on. |
-| `account_labels` | `{}` | Name account rows by mapping a CLI email or account label to a name, such as `{ "personal@example.com" = "Personal" }`. Names remain visible when email captions are hidden. |
 | `usage_display` | `"used"` | Show quota consumed with `"used"` or quota left with `"remaining"`. |
 | `show_session` | `true` | Show the shortest usage window. |
 | `show_weekly` | `true` | Show the second usage window, normally weekly. |
@@ -35,7 +34,7 @@ The applet reloads the file when the popup opens and every 60 seconds. All setti
 | `show_credits` | `true` | Show remaining provider credits. |
 | `background_opacity` | Unset | Follow the COSMIC theme, or set a value from `0.0` to `1.0` to override popup opacity. |
 
-Email hiding applies to account captions. Custom labels and provider messages or detail rows can still contain personal information. See the [configuration guide](docs/configuration.md) for file paths, defaults, and multiple-account setup.
+Email hiding applies to account captions. Provider messages or detail rows can still contain personal information. See the [configuration guide](docs/configuration.md) for file paths, defaults, and multiple-account setup.
 
 ## Documentation
 

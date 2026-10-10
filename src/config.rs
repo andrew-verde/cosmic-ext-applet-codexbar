@@ -11,7 +11,6 @@
 //! [`load`] is called on every refresh tick rather than only at startup, so
 //! edits apply within one poll interval without restarting the applet.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Deserializer};
@@ -66,10 +65,6 @@ show_credits = true
 # Show the account (usually an email address) next to the provider name.
 show_account = true
 
-# Optional names for stacked accounts, keyed by the email or account label
-# reported by CodexBar. Names remain visible when show_account is false.
-# account_labels = { "personal@example.com" = "Personal", "team@example.com" = "Virufy" }
-
 # Whether percentages and progress bars report quota consumed ("used", the
 # default) or quota left ("remaining"). The popup always labels which mode is
 # active. An unrecognised value falls back to "used".
@@ -106,8 +101,6 @@ pub struct Config {
     pub show_credits: bool,
     /// Show the account caption in the provider header.
     pub show_account: bool,
-    /// Optional names for account sections, keyed by email or CLI account label.
-    pub account_labels: BTreeMap<String, String>,
     /// Report quota consumed or quota left.
     #[serde(deserialize_with = "deserialize_usage_display")]
     pub usage_display: UsageDisplay,
@@ -178,7 +171,6 @@ impl Default for Config {
             show_reset_credits: true,
             show_credits: true,
             show_account: true,
-            account_labels: BTreeMap::new(),
             usage_display: UsageDisplay::Used,
             background_opacity: None,
         }
@@ -213,6 +205,29 @@ pub fn config_path() -> Option<PathBuf> {
         dirs::config_dir()?
     };
     Some(config_dir.join(CONFIG_DIR).join("config.toml"))
+}
+
+/// Open the config file in the user's default editor. Inside a Flatpak the
+/// host's `xdg-open` handles it, since the sandbox has no editor of its own.
+/// The file exists by now: opening the popup writes the defaults if missing.
+pub fn open_in_editor() {
+    let Some(path) = config_path() else {
+        return;
+    };
+    let mut command = if crate::codexbar::in_flatpak() {
+        let mut command = std::process::Command::new("flatpak-spawn");
+        command.args(["--host", "xdg-open"]);
+        command
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    match command.arg(path).spawn() {
+        // Reap the child off the UI thread so it does not linger as a zombie.
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+        }
+        Err(error) => eprintln!("could not open the config file: {error}"),
+    }
 }
 
 /// Load the config, falling back to defaults.
