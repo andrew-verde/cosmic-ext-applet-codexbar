@@ -6,7 +6,7 @@ This is a third-party project. It is not official COSMIC software and is not end
 
 ![Applet popup showing Claude usage windows, pace, and cost and token counts](docs/screenshot.png)
 
-![Overview tab showing provider usage summaries](docs/screenshot-overview.png)
+![Overview tab showing each provider, with one Codex account expanded](docs/screenshot-overview.png)
 
 Install the COSMIC desktop, Rust, `just`, and the CodexBar CLI. Follow the [build and installation guide](docs/install.md). See [account and display settings](docs/configuration.md) to configure the applet.
 
