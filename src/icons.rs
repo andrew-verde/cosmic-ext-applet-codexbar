@@ -94,6 +94,7 @@ const PROVIDER_ICONS: &[(&str, &[u8])] = &[
     ("ollama", include_bytes!("../data/icons/providers/ollama.svg")),
     ("opencode", include_bytes!("../data/icons/providers/opencode.svg")),
     ("opencodego", include_bytes!("../data/icons/providers/opencodego.svg")),
+    ("opendesign", include_bytes!("../data/icons/providers/opendesign.svg")),
     ("openrouter", include_bytes!("../data/icons/providers/openrouter.svg")),
     ("parallel", include_bytes!("../data/icons/providers/parallel.svg")),
     ("perplexity", include_bytes!("../data/icons/providers/perplexity.svg")),
