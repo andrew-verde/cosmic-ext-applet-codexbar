@@ -1,0 +1,37 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Test maintenance scripts
+        run: python3 -m unittest discover -s tools/tests -p 'test_*.py'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libexpat1-dev libfontconfig1-dev \
+            libfreetype-dev libxkbcommon-dev libwayland-dev libudev-dev libdbus-1-dev \
+            libegl-dev fonts-dejavu-core
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test the applet and payload fixtures
+        run: cargo test --locked

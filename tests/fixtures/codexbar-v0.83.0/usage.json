@@ -1,0 +1,61 @@
+[
+  {
+    "provider": "codex",
+    "account": "Personal",
+    "version": "0.83.0",
+    "source": "cli",
+    "usage": {
+      "primary": {
+        "usedPercent": 25,
+        "title": "Session quota",
+        "windowMinutes": 300,
+        "resetsAt": "2026-11-05T06:00:00Z",
+        "quotaLimit": 1000,
+        "quotaUnit": "requests"
+      },
+      "secondary": {
+        "usedPercent": 50,
+        "windowMinutes": 10080,
+        "resetDescription": "Friday"
+      },
+      "tertiary": null,
+      "updatedAt": "2026-11-05T03:00:00Z",
+      "identity": {
+        "providerID": "codex",
+        "accountEmail": "personal@example.com",
+        "loginMethod": "plus"
+      },
+      "details": [{
+        "title": "Requests",
+        "rows": [{
+          "label": "Used",
+          "value": "250 of 1000",
+          "secondaryValue": "Within allowance",
+          "severity": "normal",
+          "progress": {"used": 250, "total": 1000, "expectedUsed": 500}
+        }]
+      }]
+    },
+    "rateWindowLabels": {"primary": "Session", "secondary": "Weekly"},
+    "credits": {"remaining": 12.5, "events": [], "updatedAt": "2026-11-05T03:00:00Z"},
+    "pace": {
+      "primary": {
+        "stage": "ahead",
+        "deltaPercent": 5,
+        "expectedUsedPercent": 20,
+        "willLastToReset": false,
+        "etaSeconds": 9000,
+        "summary": "5% in deficit | Expected 20% used | Runs out in 2h 30m"
+      }
+    }
+  },
+  {
+    "provider": "claude",
+    "version": "0.83.0",
+    "source": "codexbar-app",
+    "ageSeconds": 15,
+    "status": {"indicator": "minor", "description": "Delayed updates", "url": "https://status.example.com"},
+    "usage": null,
+    "error": {"message": "Not signed in"}
+  }
+]
