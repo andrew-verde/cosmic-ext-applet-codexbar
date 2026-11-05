@@ -1,0 +1,26 @@
+[
+  {
+    "provider": "codex",
+    "source": "local",
+    "updatedAt": "2026-11-05T03:00:00Z",
+    "currencyCode": "USD",
+    "sessionTokens": 1000,
+    "sessionCostUSD": 0.25,
+    "historyDays": 30,
+    "historyCoverageIsEstablished": true,
+    "last30DaysTokens": 12000,
+    "last30DaysCostUSD": 3.5,
+    "daily": [],
+    "projects": [],
+    "totals": {"totalTokens": 12000, "totalCost": 3.5},
+    "error": null
+  },
+  {
+    "provider": "claude",
+    "source": "local",
+    "updatedAt": "2026-11-05T03:00:00Z",
+    "daily": [],
+    "projects": [],
+    "error": {"message": "Local history unavailable"}
+  }
+]

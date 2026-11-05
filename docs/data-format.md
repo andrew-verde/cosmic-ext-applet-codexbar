@@ -40,4 +40,4 @@ When `resetsAt` is present, the applet calculates a countdown and prefers it to 
 
 The reset-credit structure is not documented in CodexBar's CLI guide. The applet follows the Swift source and live payload shape, where the keys in this nested object use snake case. It counts credits with `status == "available"` that have not expired, matching the macOS app's behavior.
 
-See [CodexBar's CLI documentation](https://github.com/steipete/CodexBar/blob/v0.73.0/docs/cli.md) and [`ProviderPayload`](https://github.com/steipete/CodexBar/blob/v0.73.0/Sources/CodexBarCLI/CLIPayloads.swift) for the upstream definitions. The applet parser is in [`src/codexbar.rs`](../src/codexbar.rs).
+See [CodexBar's CLI documentation](https://github.com/steipete/CodexBar/blob/v0.83.0/docs/cli.md) and [`ProviderPayload`](https://github.com/steipete/CodexBar/blob/v0.83.0/Sources/CodexBarCLI/CLIPayloads.swift) for the upstream definitions. The [v0.83.0 review and fixtures](../tests/fixtures/codexbar-v0.83.0/README.md) record compatibility checks and fields the applet ignores. The applet parser is in [`src/codexbar.rs`](../src/codexbar.rs).

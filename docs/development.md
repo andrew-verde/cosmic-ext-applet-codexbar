@@ -6,6 +6,10 @@ Build a release binary with `just build-release`. Run the Rust tests with `just 
 python3 -m unittest discover -s tools/tests -p 'test_*.py'
 ```
 
+The [Checks workflow](../.github/workflows/checks.yml) runs both suites for pull
+requests and pushes to `main`, using the committed Cargo lockfile. `cargo test`
+also runs the [reviewed upstream contract fixtures](../tests/fixtures/codexbar-v0.83.0/README.md).
+
 ## Rendering the popup
 
 `render_popup_states` in `src/window.rs` draws the popup offscreen with sample accounts and writes PAM images for review. It covers Overview, a provider tab, expanded and hovered account rows, a scrolling body, both popup widths, and hidden emails with remaining-quota display. It is ignored by default:
