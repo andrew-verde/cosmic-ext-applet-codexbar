@@ -64,6 +64,7 @@ const PROVIDER_ICONS: &[(&str, &[u8])] = &[
     ("futureagi", include_bytes!("../data/icons/providers/futureagi.svg")),
     ("gemini", include_bytes!("../data/icons/providers/gemini.svg")),
     ("gitkraken", include_bytes!("../data/icons/providers/gitkraken.svg")),
+    ("googledeveloper", include_bytes!("../data/icons/providers/googledeveloper.svg")),
     ("grok", include_bytes!("../data/icons/providers/grok.svg")),
     ("groq", include_bytes!("../data/icons/providers/groq.svg")),
     ("helmcode", include_bytes!("../data/icons/providers/helmcode.svg")),
