@@ -118,6 +118,7 @@ const PROVIDER_ICONS: &[(&str, &[u8])] = &[
     ("tinyapi", include_bytes!("../data/icons/providers/tinyapi.svg")),
     ("traecn", include_bytes!("../data/icons/providers/traecn.svg")),
     ("tripo", include_bytes!("../data/icons/providers/tripo.svg")),
+    ("trustedrouter", include_bytes!("../data/icons/providers/trustedrouter.svg")),
     ("typesafe", include_bytes!("../data/icons/providers/typesafe.svg")),
     ("v0", include_bytes!("../data/icons/providers/v0.svg")),
     ("venice", include_bytes!("../data/icons/providers/venice.svg")),
